@@ -639,7 +639,7 @@ def parse_moenv_ods_gwp(content: bytes) -> ParseResult:
 
 
 def steel_average_data_not_configured_result():
-    """Steel secondary factors have no approved official table in v1."""
+    """Legacy stub parser. CFP_P_02 uses parse_cfp_p_02_json instead."""
     from carbon_ledger.reference_sync import LIFECYCLE_NEEDS_PARSER_REVIEW
 
     return _parse_result_type()(
@@ -647,7 +647,64 @@ def steel_average_data_not_configured_result():
         status=LIFECYCLE_NEEDS_PARSER_REVIEW,
         records=[],
         reason=(
-            "No approved purchased-steel average-data factor is configured. "
-            "V1 does not invent or auto-activate a generic steel coefficient."
+            "Legacy purchased_steel_average_data_v1 parser is not used. "
+            "Steel average-data candidates come from CFP_P_02 snapshots."
+        ),
+    )
+
+
+def parse_cfp_p_02_json(content: bytes):
+    """Parse a CFP_P_02 snapshot or page. Official fields only; no invented validity."""
+    from carbon_ledger.cfp_p_02 import (
+        PARSER_TYPE,
+        CfpParseError,
+        build_snapshot,
+        candidate_records_from_snapshot,
+        steel_official_records,
+    )
+    from carbon_ledger.reference_sync import (
+        LIFECYCLE_NEEDS_PARSER_REVIEW,
+        LIFECYCLE_PARSED,
+    )
+    from carbon_ledger.steel_factor_catalog import official_taxonomy_names
+
+    try:
+        snapshot = build_snapshot(
+            [content],
+            retrieved_at="",
+            taxonomy_names=official_taxonomy_names(),
+        )
+    except CfpParseError as exc:
+        return _parse_result_type()(
+            parser_type=PARSER_TYPE,
+            status=LIFECYCLE_NEEDS_PARSER_REVIEW,
+            records=[],
+            reason=exc.reason,
+        )
+    steel = steel_official_records(
+        snapshot.records, taxonomy_names=official_taxonomy_names()
+    )
+    names = [record.name for record in steel]
+    if len(names) != len(set(names)):
+        return _parse_result_type()(
+            parser_type=PARSER_TYPE,
+            status=LIFECYCLE_NEEDS_PARSER_REVIEW,
+            records=[],
+            reason=(
+                "CFP_P_02 steel names collided after parsing; products were "
+                "not merged, and activation is blocked pending review."
+            ),
+        )
+    records = candidate_records_from_snapshot(
+        snapshot, taxonomy_names=official_taxonomy_names()
+    )
+    return _parse_result_type()(
+        parser_type=PARSER_TYPE,
+        status=LIFECYCLE_PARSED,
+        records=records,
+        reason=(
+            "Parsed official CFP_P_02 steel product rows. Geography, "
+            "lifecycle boundary, technology, and reporting applicability "
+            "were not stated by the API and were left blank."
         ),
     )

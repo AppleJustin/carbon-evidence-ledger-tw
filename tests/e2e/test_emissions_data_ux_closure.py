@@ -236,12 +236,12 @@ def _assert_scope_semantics(text: str, *, lang: str) -> None:
     assert UNLABELED_NOT_CALCULATED.search(text) is None
     if lang == ZH:
         assert "Scope 2（地區基準）：" in text
-        assert t("dash.hero.scope3_version", ZH) in text
+        assert t("dash.scope3.empty", ZH) in text
         assert "tCO₂e · 尚未計算" not in text
         assert "tCO₂e ·尚未計算" not in text
     else:
         assert "Scope 2 (location-based):" in text
-        assert t("dash.hero.scope3_version", EN) in text
+        assert t("dash.scope3.empty", EN) in text
         assert "tCO₂e · Not calculated" not in text
         assert "tCO2e · Not calculated" not in text
 

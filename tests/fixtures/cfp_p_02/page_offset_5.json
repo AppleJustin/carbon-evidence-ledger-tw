@@ -1,0 +1,40 @@
+{
+  "fields": [
+    {"id": "name", "type": "text"},
+    {"id": "coe", "type": "text"},
+    {"id": "unit", "type": "text"},
+    {"id": "departmentname", "type": "text"},
+    {"id": "announcementyear", "type": "text"}
+  ],
+  "resource_id": "cfp_p_02",
+  "records": [
+    {
+      "name": "熱軋鋼板片",
+      "coe": "2.300",
+      "unit": "kg",
+      "departmentname": "Redacted Agency E",
+      "announcementyear": "2023"
+    },
+    {
+      "name": "冷軋鋼捲",
+      "coe": "2.500",
+      "unit": "kg",
+      "departmentname": "Redacted Agency F",
+      "announcementyear": "2024"
+    },
+    {
+      "name": "碳鋼冷軋鋼捲",
+      "coe": "2.550",
+      "unit": "kg",
+      "departmentname": "Redacted Agency G",
+      "announcementyear": "2024"
+    },
+    {
+      "name": "不鏽鋼",
+      "coe": "4.100",
+      "unit": "kg",
+      "departmentname": "Redacted Agency H",
+      "announcementyear": "2023"
+    }
+  ]
+}

@@ -233,6 +233,12 @@ ACTIVITY_RECORDS_SCHEMA = DataFrameSchema(
         "includes_tier1_to_reporting_company_transport": Column(
             str, nullable=True, required=False
         ),
+        "factor_includes_tier1_to_reporting_company_transport": Column(
+            str, nullable=True, required=False
+        ),
+        "tier1_to_reporting_company_transport_control": Column(
+            str, nullable=True, required=False
+        ),
         "activity_value": Column(float, checks=Check.gt(0), nullable=False),
         "unit": Column(str, checks=Check.isin(SUPPORTED_UNITS), nullable=False),
         "transport_payer": Column(

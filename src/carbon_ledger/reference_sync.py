@@ -23,7 +23,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urljoin, urlparse, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urljoin, urlparse, urlsplit, urlunsplit
 from urllib.request import (
     HTTPRedirectHandler,
     HTTPSHandler,
@@ -74,11 +74,13 @@ ALLOWED_FETCH_MODES = frozenset(
 RETRIEVAL_PARSE_LANDING = "parse_landing"
 RETRIEVAL_DISCOVER_ATTACHMENT = "discover_attachment"
 RETRIEVAL_PROVENANCE_ONLY = "provenance_only"
+RETRIEVAL_PAGINATED_OPEN_DATA_API = "paginated_open_data_api"
 ALLOWED_RETRIEVAL_STRATEGIES = frozenset(
     {
         RETRIEVAL_PARSE_LANDING,
         RETRIEVAL_DISCOVER_ATTACHMENT,
         RETRIEVAL_PROVENANCE_ONLY,
+        RETRIEVAL_PAGINATED_OPEN_DATA_API,
     }
 )
 
@@ -255,6 +257,7 @@ STATUS_ALREADY_KNOWN = "already_known"
 REF_TYPE_FUEL_EF = "fuel_emission_factor"
 REF_TYPE_GWP = "gwp_reference"
 REF_TYPE_HEATING = "fuel_heating_values"
+WRONG_DOCUMENT_FOR_SOURCE = "WRONG_DOCUMENT_FOR_SOURCE"
 REF_TYPE_STEEL = "purchased_steel_average_data"
 REF_TYPE_GENERAL_EF = "general_emission_factors"
 GWP_ASSESSMENT_AR5 = "IPCC AR5 100-year GWP"
@@ -565,6 +568,95 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
+def _decoded_locator_text(*values: Any) -> str:
+    return unquote(" ".join(_text(item) for item in values if _text(item)))
+
+
+def _looks_like_emission_factor_document(*values: Any) -> bool:
+    return "排放係數" in _decoded_locator_text(*values)
+
+
+def _is_heating_value_source(
+    *,
+    reference_type: str = "",
+    candidate_type: str = "",
+    source_id: str = "",
+) -> bool:
+    return (
+        _text(reference_type) == REF_TYPE_HEATING
+        or _text(candidate_type) == REF_TYPE_HEATING
+        or "fuel_heating_values" in _text(source_id)
+    )
+
+
+def wrong_document_issues(
+    candidate: dict[str, Any] | pd.Series | None = None,
+    *,
+    reference_type: str = "",
+    candidate_type: str = "",
+    source_id: str = "",
+    locator: str = "",
+    source_url: str = "",
+    source_location: str = "",
+    existing_text: str = "",
+) -> list[str]:
+    """Mark heating-value sources that retrieved an emission-factor document."""
+    row = candidate if candidate is not None else {}
+    ref_type = reference_type or _text(row.get("reference_type"))
+    cand_type = candidate_type or _text(row.get("candidate_type"))
+    src_id = source_id or _text(row.get("source_id"))
+    if not _is_heating_value_source(
+        reference_type=ref_type,
+        candidate_type=cand_type,
+        source_id=src_id,
+    ):
+        return []
+    locators = (
+        locator or _text(row.get("source_locator")),
+        source_url or _text(row.get("source_url")),
+        source_location or _text(row.get("source_location")),
+    )
+    blob = existing_text or " ".join(
+        [
+            _text(row.get("reason")),
+            _text(row.get("notes")),
+            _text(row.get("validation_messages")),
+        ]
+    )
+    if _looks_like_emission_factor_document(*locators) or (
+        WRONG_DOCUMENT_FOR_SOURCE in blob
+    ):
+        return [WRONG_DOCUMENT_FOR_SOURCE]
+    return []
+
+
+def wrong_document_for_source_note(
+    *,
+    reference_type: str,
+    source_id: str = "",
+    retrieved_url: str = "",
+    discovered_url: str = "",
+) -> str:
+    """Snapshot note when a heating-value source retrieved an EF document."""
+    issues = wrong_document_issues(
+        reference_type=reference_type,
+        source_id=source_id,
+        locator=retrieved_url,
+        source_url=discovered_url,
+        source_location=retrieved_url,
+    )
+    if not issues:
+        return ""
+    filename = _decoded_locator_text(retrieved_url or discovered_url).rsplit(
+        "/", 1
+    )[-1]
+    return (
+        f"{WRONG_DOCUMENT_FOR_SOURCE}: filename/source_id say "
+        f"fuel_heating_values but retrieved_url is {filename}. "
+        "Do not use as heating-value evidence. File retained."
+    )
+
+
 def _truthy(value: Any) -> bool:
     return _text(value).lower() in {"1", "true", "yes", "y", "active"}
 
@@ -602,6 +694,12 @@ def default_paths(repo_root: Path) -> dict[str, Path]:
         "fuel_heating_values": root / "data" / "reference" / "fuel_heating_values.csv",
         "gwp_values": root / "data" / "reference" / "gwp_values.csv",
         "artifact_dir": root / "data" / "reference_snapshots",
+        "steel_factors": root / "data" / "reference" / "purchased_steel_factors.csv",
+        "steel_candidates": root
+        / "data"
+        / "reference"
+        / "purchased_steel_factor_candidates.csv",
+        "steel_taxonomy": root / "data" / "reference" / "steel_product_taxonomy.csv",
         "proposal_json": root
         / "data"
         / "reference"
@@ -1116,6 +1214,18 @@ def register_snapshot(
                 if provenance_notes
                 else moenv_note
             )
+    mismatch_note = wrong_document_for_source_note(
+        reference_type=_text(source_row.get("reference_type")),
+        source_id=source_id,
+        retrieved_url=retrieved_url,
+        discovered_url=discovered_url,
+    )
+    if mismatch_note and WRONG_DOCUMENT_FOR_SOURCE not in provenance_notes:
+        provenance_notes = (
+            f"{provenance_notes} {mismatch_note}"
+            if provenance_notes
+            else mismatch_note
+        )
 
     snapshot_id = f"snap_{source_id}_{fetch.sha256[:12]}"
     row = {
@@ -1855,6 +1965,10 @@ def parse_artifact(
         )
 
         return steel_average_data_not_configured_result()
+    if parser == "cfp_p_02_open_data_v1":
+        from carbon_ledger.official_table_parse import parse_cfp_p_02_json
+
+        return parse_cfp_p_02_json(content)
     if parser == "tw_moenv_electricity_news_landing_v1":
         html_parsed = parse_moenv_electricity_news_html(content)
         if html_parsed.status == LIFECYCLE_PARSED:
@@ -1914,6 +2028,8 @@ def _candidate_id(snapshot_id: str, record: dict[str, Any]) -> str:
             _text(record.get("factor_value")),
             _text(record.get("valid_from")),
             _text(record.get("valid_to")),
+            _text(record.get("source_record_id") or record.get("source_locator")),
+            _text(record.get("steel_product_type")),
         ]
     )
     digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:12]
@@ -1939,6 +2055,26 @@ def upsert_candidates_from_parse(
     if parsed.status == LIFECYCLE_NEEDS_PARSER_REVIEW:
         review_id = f"cand_review_{snapshot['snapshot_id'][-12:]}"
         if review_id not in existing_ids:
+            mismatch = wrong_document_issues(
+                reference_type=_text(source_row.get("reference_type")),
+                source_id=_text(source_row.get("source_id")),
+                locator=_text(snapshot.get("retrieved_url")),
+                source_url=_text(snapshot.get("retrieved_url")),
+                source_location=_text(snapshot.get("retrieved_url")),
+                existing_text=" ".join(
+                    [
+                        parsed.reason,
+                        _text(snapshot.get("notes")),
+                    ]
+                ),
+            )
+            reason = parsed.reason
+            if mismatch and WRONG_DOCUMENT_FOR_SOURCE not in reason:
+                reason = (
+                    f"{WRONG_DOCUMENT_FOR_SOURCE}; {reason}"
+                    if reason
+                    else WRONG_DOCUMENT_FOR_SOURCE
+                )
             row = {
                 "candidate_id": review_id,
                 "snapshot_id": snapshot["snapshot_id"],
@@ -1966,7 +2102,7 @@ def upsert_candidates_from_parse(
                 "validation_status": VALIDATION_PENDING,
                 "lifecycle_status": LIFECYCLE_NEEDS_PARSER_REVIEW,
                 "parser_version": PARSER_VERSION,
-                "reason": parsed.reason,
+                "reason": reason,
                 "notes": (
                     "Snapshot retained; values not guessed "
                     "from unstructured text."
@@ -1982,7 +2118,7 @@ def upsert_candidates_from_parse(
                 "refrigerant": "",
                 "assessment_basis": "",
                 "factor_unit": "",
-                "validation_messages": parsed.reason,
+                "validation_messages": reason,
                 "created_at": _text(snapshot.get("retrieved_at")),
             }
             candidates = pd.concat([candidates, pd.DataFrame([row])], ignore_index=True)
@@ -2095,7 +2231,7 @@ def _official_applicability_issues(candidate: dict[str, Any] | pd.Series) -> lis
 
 def validate_candidate_row(candidate: dict[str, Any] | pd.Series) -> list[str]:
     """Return validation issue messages; empty list means passed."""
-    issues: list[str] = []
+    issues: list[str] = list(wrong_document_issues(candidate))
     lifecycle = _text(candidate.get("lifecycle_status"))
     if lifecycle == LIFECYCLE_NEEDS_PARSER_REVIEW:
         issues.append("Candidate requires parser review; values were not extracted.")
@@ -2104,10 +2240,32 @@ def validate_candidate_row(candidate: dict[str, Any] | pd.Series) -> list[str]:
     ref_type = _text(candidate.get("reference_type"))
     candidate_type = _text(candidate.get("candidate_type")) or ref_type
     if candidate_type == REF_TYPE_STEEL or ref_type == REF_TYPE_STEEL:
-        issues.append(
-            "purchased_steel average-data factors cannot be auto-activated; "
-            "no approved steel coefficient is configured."
+        if not _text(candidate.get("factor_value")):
+            issues.append("official CFP_P_02 coe/factor_value is required")
+        product_name = _text(candidate.get("factor_category")) or _text(
+            candidate.get("steel_product_type")
         )
+        if not product_name:
+            issues.append("official CFP_P_02 steel product name is required")
+        if not _text(candidate.get("source_id")):
+            issues.append("source_id is required")
+        if not _text(candidate.get("snapshot_id")):
+            issues.append("snapshot_id is required")
+        if not (
+            _text(candidate.get("source_locator"))
+            or _text(candidate.get("source_sha256"))
+        ):
+            issues.append("source_record_id or snapshot hash is required")
+        if _text(candidate.get("valid_from")):
+            issues.append(
+                "CFP_P_02 does not provide valid_from; announcementyear "
+                "must not be copied into valid_from"
+            )
+        if _text(candidate.get("valid_to")):
+            issues.append(
+                "CFP_P_02 does not provide valid_to; do not invent an "
+                "official applicability end date"
+            )
         return issues
 
     value_text = _text(candidate.get("factor_value"))
@@ -2229,6 +2387,16 @@ def validate_candidate_row(candidate: dict[str, Any] | pd.Series) -> list[str]:
     return issues
 
 
+def _steel_candidate_is_new(frame: pd.DataFrame, retrieved_at: str) -> bool:
+    if frame.empty:
+        return False
+    created = _text(frame.iloc[0].get("created_at"))
+    retrieved = _text(retrieved_at)
+    if not retrieved:
+        return True
+    return created == retrieved
+
+
 def validate_candidates(
     candidates_csv: Path,
     *,
@@ -2257,9 +2425,15 @@ def validate_candidates(
             issues.append(
                 "source_id is not an allowlisted official reference source"
             )
+        for token in wrong_document_issues(row):
+            if token not in issues:
+                issues.insert(0, token)
         if issues:
             candidates.at[index, "validation_status"] = VALIDATION_FAILED
-            if _text(row.get("lifecycle_status")) != LIFECYCLE_NEEDS_PARSER_REVIEW:
+            if (
+                WRONG_DOCUMENT_FOR_SOURCE in issues
+                or _text(row.get("lifecycle_status")) != LIFECYCLE_NEEDS_PARSER_REVIEW
+            ):
                 candidates.at[index, "lifecycle_status"] = LIFECYCLE_REJECTED
             candidates.at[index, "reason"] = "; ".join(issues)
         else:
@@ -2434,8 +2608,10 @@ def assert_candidate_ready_for_activation(
     candidate_type = _text(candidate.get("candidate_type")) or ref_type
     if candidate_type == REF_TYPE_STEEL or ref_type == REF_TYPE_STEEL:
         raise ReferenceSyncError(
-            "STEEL_FACTOR_NOT_CONFIGURED",
-            "Purchased-steel average-data factors cannot be auto-activated.",
+            "STEEL_FACTOR_NOT_AUTO_ACTIVATED",
+            "Purchased-steel average-data factors cannot be auto-activated. "
+            "Official CFP_P_02 candidates require reviewed applicability "
+            "metadata before they can become active factors.",
         )
     if ref_type == REF_TYPE_GWP:
         if not (
@@ -3166,6 +3342,7 @@ def propose_official_factor_update(
     items: list[dict[str, Any]] = []
     cannot_activate: list[dict[str, Any]] = []
     activatable: list[str] = []
+    steel_pending: list[str] = []
     manual_review = False
     snapshot_hashes: list[str] = []
 
@@ -3241,8 +3418,14 @@ def propose_official_factor_update(
             reason = row["validation_messages"] or row["reason"] or lifecycle
             if ref_type == REF_TYPE_STEEL:
                 reason = (
-                    "No approved purchased-steel average-data factor is configured."
+                    "Official CFP_P_02 steel row is a candidate only. "
+                    "Lifecycle boundary, geography, technology, and "
+                    "approved_for_reporting_from/to require human review "
+                    "before activation. Merging a candidate PR does not "
+                    "overwrite active factors."
                 )
+                if lifecycle != LIFECYCLE_ACTIVE:
+                    steel_pending.append(row["candidate_id"])
             cannot_activate.append(
                 {
                     "candidate_id": row["candidate_id"],
@@ -3250,26 +3433,38 @@ def propose_official_factor_update(
                     "source_id": row["source_id"],
                 }
             )
-            manual_review = True
+            if ref_type != REF_TYPE_STEEL:
+                manual_review = True
         items.append(item)
 
     unique_hashes = sorted(set(snapshot_hashes))
-    open_pr = bool(activatable)
+    new_steel_pending = [
+        candidate_id
+        for candidate_id in steel_pending
+        if _steel_candidate_is_new(
+            candidates.loc[candidates["candidate_id"] == candidate_id],
+            retrieved_at,
+        )
+    ]
+    open_pr = bool(activatable) or bool(new_steel_pending)
     proposal = {
         "generated_at": retrieved_at or "",
         "open_pr": open_pr,
         "same_hash_noop": not items and not unique_hashes,
         "manual_review_required": manual_review,
         "activatable_candidate_ids": activatable,
+        "steel_candidate_ids": new_steel_pending,
         "snapshot_sha256": unique_hashes,
         "items": items,
         "cannot_activate": cannot_activate,
         "notes": [
             "This proposal never auto-merges and never silently replaces "
             "production coefficients.",
-            "Merging the review PR is the human approval that activates "
-            "the new versioned registry rows.",
-            "Purchased-steel average-data factors are not configured in v1.",
+            "Electricity/fuel activation still requires human merge of "
+            "validated registry rows.",
+            "Purchased-steel CFP_P_02 rows stay candidates until "
+            "applicability review. This workflow must not write active "
+            "steel factors or rewrite historical results.",
         ],
     }
     paths["proposal_json"].write_text(
@@ -3447,6 +3642,18 @@ def check_official_sources(
             )
             results.append(item)
             continue
+        retrieval_strategy = _text(source.get("retrieval_strategy"))
+        if retrieval_strategy == RETRIEVAL_PAGINATED_OPEN_DATA_API:
+            item["status"] = "scheduled_open_data_api"
+            item["message"] = (
+                "CFP_P_02 is fetched from the public data.gov.tw dataset "
+                "page by parsing the current JSON/CSV resource URL. "
+                "MOENV_API_KEY is optional API fallback only and is not "
+                "required to download the public catalog. Check does not "
+                "download the full dataset."
+            )
+            results.append(item)
+            continue
         try:
             fetched = fetch_fn(
                 _text(source["landing_url"]),
@@ -3468,12 +3675,171 @@ def check_official_sources(
     return results
 
 
+def _fetch_and_stage_cfp_p_02(
+    *,
+    paths: dict[str, Path],
+    source: pd.Series,
+    retrieved_at: str,
+    snapshots: pd.DataFrame,
+    page_fetcher: Any = None,
+    page_limit: int | None = None,
+) -> dict[str, Any]:
+    """Fetch every CFP_P_02 page, snapshot it, and stage steel candidates only."""
+    from carbon_ledger.cfp_p_02 import (
+        API_BASE_URL,
+        DEFAULT_PAGE_LIMIT,
+        CfpApiError,
+        CfpParseError,
+        candidate_records_from_snapshot,
+        fetch_cfp_p_02_snapshot,
+    )
+    from carbon_ledger.steel_factor_catalog import (
+        official_taxonomy_names,
+        upsert_steel_candidates,
+    )
+
+    source_id = _text(source["source_id"])
+    source_row = {column: _text(source.get(column)) for column in SOURCE_COLUMNS}
+    previous = None
+    prior_rows = snapshots.loc[snapshots["source_id"] == source_id]
+    if not prior_rows.empty:
+        previous = {
+            col: _text(prior_rows.iloc[-1][col]) for col in SNAPSHOT_COLUMNS
+        }
+    try:
+        snapshot_obj = fetch_cfp_p_02_snapshot(
+            retrieved_at=retrieved_at,
+            page_fetcher=page_fetcher,
+            limit=page_limit or DEFAULT_PAGE_LIMIT,
+        )
+    except CfpApiError as exc:
+        status = (
+            "credential_required"
+            if exc.code == "CREDENTIAL_REQUIRED"
+            else "parse_failed"
+        )
+        return {
+            "source_id": source_id,
+            "status": status,
+            "message": f"{exc.code}: {exc.message}",
+            "candidates_created": 0,
+            "review_reason": exc.message,
+        }
+    except CfpParseError as exc:
+        return {
+            "source_id": source_id,
+            "status": "parse_failed",
+            "message": exc.reason,
+            "candidates_created": 0,
+            "review_reason": exc.reason,
+        }
+
+    content = snapshot_obj.to_canonical_bytes()
+    fetch_result = FetchResult(
+        url=snapshot_obj.source_url or API_BASE_URL,
+        final_url=snapshot_obj.source_url or API_BASE_URL,
+        content=content,
+        media_type="application/json",
+        sha256=snapshot_obj.response_sha256,
+        byte_size=len(content),
+        discovered_url=snapshot_obj.dataset_page_url,
+    )
+    existing = find_snapshot_by_sha(snapshots, fetch_result.sha256)
+    already_known = (
+        existing is not None and _text(existing.get("source_id")) == source_id
+    )
+    snapshot = register_snapshot(
+        snapshots_csv=paths["snapshots_csv"],
+        artifact_dir=paths["artifact_dir"],
+        source_row=source_row,
+        fetch=fetch_result,
+        retrieved_at=retrieved_at,
+        publication_date="",
+        status=LIFECYCLE_DOWNLOADED,
+        notes=(
+            "CFP_P_02 public open-data snapshot. Records hash is the "
+            "snapshot SHA-256. Public access tokens were redacted from "
+            "stored URLs. Official data does not state lifecycle boundary "
+            "or a government validity period."
+        ),
+    )
+    created: list[dict[str, str]] = []
+    steel_created: list[dict[str, str]] = []
+    if not already_known:
+        parsed = parse_artifact(
+            content,
+            parser_type=_text(source["parser_type"]),
+            expected_file_type=_text(source["expected_file_type"]),
+        )
+        if parsed.status != LIFECYCLE_PARSED:
+            return {
+                "source_id": source_id,
+                "status": "parse_failed",
+                "message": parsed.reason,
+                "candidates_created": 0,
+                "review_reason": parsed.reason,
+                "snapshot_id": snapshot["snapshot_id"],
+                "sha256": snapshot["sha256"],
+            }
+        created = upsert_candidates_from_parse(
+            candidates_csv=paths["candidates_csv"],
+            snapshot=snapshot,
+            source_row=source,
+            parsed=parsed,
+        )
+        steel_created = upsert_steel_candidates(
+            candidate_records_from_snapshot(
+                snapshot_obj,
+                taxonomy_names=official_taxonomy_names(paths["reference_dir"]),
+            ),
+            snapshot_id=snapshot["snapshot_id"],
+            source_id=source_id,
+            retrieved_at=retrieved_at,
+            reference_dir=paths["reference_dir"],
+        )
+    prev_candidates = _read_csv(paths["candidates_csv"], CANDIDATE_COLUMNS)
+    prev_candidates = prev_candidates.loc[prev_candidates["source_id"] == source_id]
+    report = build_change_report(
+        source_id=source_id,
+        reference_type=_text(source["reference_type"]),
+        previous_snapshot=previous,
+        new_snapshot=snapshot,
+        previous_candidates=(
+            prev_candidates if already_known else prev_candidates.iloc[0:0]
+        ),
+        new_candidates=created,
+    )
+    return {
+        "source_id": source_id,
+        "status": "already_known" if already_known else "staged",
+        "snapshot_id": snapshot["snapshot_id"],
+        "sha256": snapshot["sha256"],
+        "candidates_created": len(created),
+        "steel_candidates_created": len(steel_created),
+        "parser_status": LIFECYCLE_PARSED,
+        "retrieved_url": snapshot["retrieved_url"],
+        "retrieval_strategy": RETRIEVAL_PAGINATED_OPEN_DATA_API,
+        "change_report": report.to_text(),
+        "message": (
+            "CFP_P_02 snapshot already known; no candidate overwrite."
+            if already_known
+            else (
+                f"Staged {len(created)} official candidate row(s) and "
+                f"{len(steel_created)} steel review candidate(s). "
+                "Active factors were not modified."
+            )
+        ),
+    }
+
+
 def fetch_and_stage_sources(
     repo_root: Path,
     *,
     retrieved_at: str,
     source_ids: list[str] | None = None,
     fetch: FetchCallable | None = None,
+    cfp_page_fetcher: Any = None,
+    cfp_page_limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Download allowlisted artifacts, register snapshots, and stage candidates.
 
@@ -3484,6 +3850,10 @@ def fetch_and_stage_sources(
       auto-discover or substitute an attachment (e.g. PDF).
     - ``discover_attachment`` — fetch landing HTML, discover an allowlisted
       attachment, then download/parse that artifact.
+    - ``paginated_open_data_api`` — parse the current public JSON/CSV
+      resource URL from the official dataset page, then walk
+      offset/limit until a short page. MOENV_API_KEY is optional
+      fallback only; never assume a single page.
     - ``provenance_only`` — no network fetch (aligned with fetch_mode).
 
     Direct invented CSV endpoints are not assumed.
@@ -3536,6 +3906,19 @@ def fetch_and_stage_sources(
                     "candidates_created": 0,
                 }
             )
+            continue
+        if retrieval_strategy == RETRIEVAL_PAGINATED_OPEN_DATA_API:
+            report = _fetch_and_stage_cfp_p_02(
+                paths=paths,
+                source=source,
+                retrieved_at=retrieved_at,
+                snapshots=snapshots,
+                page_fetcher=cfp_page_fetcher,
+                page_limit=cfp_page_limit,
+            )
+            snapshots = _read_csv(paths["snapshots_csv"], SNAPSHOT_COLUMNS)
+            candidates = _read_csv(paths["candidates_csv"], CANDIDATE_COLUMNS)
+            reports.append(report)
             continue
         try:
             landing_fetch = fetch_fn(

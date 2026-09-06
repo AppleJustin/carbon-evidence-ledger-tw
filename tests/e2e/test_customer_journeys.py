@@ -782,7 +782,8 @@ def test_journey9_stage41_customer_calculation(page) -> None:
     save_step_screenshot(page, "qa_simple_result_top")
     assert "Scope 1" in body
     assert "Scope 2" in body
-    assert "尚未納入計算" in body or "Not included" in body
+    assert "目前尚無可納入的 Scope 3 計算結果" in body or "No Scope 3 results" in body
+    assert "Scope 3 尚未納入計算" not in body
     assert "直接排放" in body
     assert "下一步" in body or "仍需處理" in body
     detail = page.get_by_text("排放明細", exact=False).first
@@ -902,7 +903,8 @@ def test_journey11_visible_countup_from_zero(page) -> None:
     save_step_screenshot(page, "qa_countup_final")
     body = visible_text(page)
     assert "碳排計算完成" in body or "初步碳排結果" in body
-    assert "尚未納入計算" in body or "Not included" in body
+    assert "目前尚無可納入的 Scope 3 計算結果" in body or "No Scope 3 results" in body
+    assert "Scope 3 尚未納入計算" not in body
     assert_no_raw_html_leak(body)
     assert_no_app_errors(page)
 

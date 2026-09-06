@@ -204,7 +204,7 @@ def test_scope_totals_exclude_blocked_and_unsupported() -> None:
     states = scope_kpi_states(result)
     assert states["scope_1"]["state"] == "calculated"
     assert states["scope_2"]["state"] == "calculated"
-    assert states["scope_3"]["state"] == "unsupported"
+    assert states["scope_3"]["state"] == "empty"
     assert states["scope_3"]["value"] is None
 
 

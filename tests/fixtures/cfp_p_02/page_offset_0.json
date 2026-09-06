@@ -1,0 +1,47 @@
+{
+  "fields": [
+    {"id": "name", "type": "text"},
+    {"id": "coe", "type": "text"},
+    {"id": "unit", "type": "text"},
+    {"id": "departmentname", "type": "text"},
+    {"id": "announcementyear", "type": "text"}
+  ],
+  "resource_id": "cfp_p_02",
+  "records": [
+    {
+      "name": "鋼板",
+      "coe": "2.415",
+      "unit": "kg",
+      "departmentname": "Redacted Agency A",
+      "announcementyear": "2023"
+    },
+    {
+      "name": "熱軋粗鋼捲",
+      "coe": "2.110",
+      "unit": "kg",
+      "departmentname": "Redacted Agency B",
+      "announcementyear": "2023"
+    },
+    {
+      "name": "熱軋鋼捲",
+      "coe": "2.050",
+      "unit": "kg",
+      "departmentname": "Redacted Agency C",
+      "announcementyear": "2024"
+    },
+    {
+      "name": "熱軋酸洗塗油鋼捲",
+      "coe": "2.200",
+      "unit": "kg",
+      "departmentname": "Redacted Agency D",
+      "announcementyear": "2024"
+    },
+    {
+      "name": "波特蘭水泥",
+      "coe": "0.900",
+      "unit": "kg",
+      "departmentname": "Redacted Agency X",
+      "announcementyear": "2023"
+    }
+  ]
+}

@@ -27,7 +27,14 @@ from carbon_ledger.heating import (
 )
 from carbon_ledger.match_factors import match_activity_factors
 from carbon_ledger.pipeline import run_demo_pipeline, run_uploaded_pipeline
-from carbon_ledger.reference_sync import LIFECYCLE_ACTIVE, LIFECYCLE_REJECTED
+from carbon_ledger.reference_sync import (
+    LIFECYCLE_ACTIVE,
+    LIFECYCLE_CANDIDATE,
+    LIFECYCLE_REJECTED,
+    WRONG_DOCUMENT_FOR_SOURCE,
+    validate_candidate_row,
+    validate_candidates,
+)
 from carbon_ledger.ui.view_models import (
     calculated_emissions_by_ghg_scope,
     calculated_emissions_summary,
@@ -206,6 +213,68 @@ def test_mislabeled_heating_value_snapshot_is_not_activated() -> None:
     assert row["lifecycle_status"] == LIFECYCLE_REJECTED
     assert row["lifecycle_status"] != LIFECYCLE_ACTIVE
     assert "WRONG_DOCUMENT_FOR_SOURCE" in row["reason"]
+
+
+def test_revalidating_mislabeled_heating_value_keeps_wrong_document(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    shutil.copytree(LIVE_REFERENCE, root / "data" / "reference")
+    candidates_csv = root / "data" / "reference" / "reference_candidates.csv"
+    frame = pd.read_csv(candidates_csv, dtype=str)
+    mask = frame["candidate_id"] == "cand_review_f809a27150c0"
+    frame.loc[mask, "reason"] = "factor_value is not numeric"
+    frame.loc[mask, "validation_messages"] = "factor_value is not numeric"
+    frame.to_csv(candidates_csv, index=False)
+    validate_candidates(
+        candidates_csv,
+        candidate_ids=["cand_review_f809a27150c0"],
+    )
+    row = pd.read_csv(candidates_csv, dtype=str).loc[mask].iloc[0]
+    assert WRONG_DOCUMENT_FOR_SOURCE in row["reason"]
+    assert WRONG_DOCUMENT_FOR_SOURCE in row["validation_messages"]
+    assert row["lifecycle_status"] == LIFECYCLE_REJECTED
+    assert row["lifecycle_status"] != LIFECYCLE_ACTIVE
+    snaps = pd.read_csv(
+        root / "data" / "reference" / "reference_snapshots.csv", dtype=str
+    )
+    snap = snaps.loc[
+        snaps["snapshot_id"] == "snap_src_tw_moenv_fuel_heating_values_f809a27150c0"
+    ].iloc[0]
+    assert WRONG_DOCUMENT_FOR_SOURCE in snap["notes"]
+
+
+def test_heating_value_emission_factor_pdf_fails_closed_as_wrong_document() -> None:
+    locator = (
+        "https://ghgregistry.moenv.gov.tw/upload/Tools/AI/"
+        "113%E5%B9%B42%E6%9C%885%E6%97%A5%E5%85%AC%E5%91%8A"
+        "%E6%BA%AB%E5%AE%A4%E6%B0%A3%E9%AB%94%E6%8E%92%E6%94%BE"
+        "%E4%BF%82%E6%95%B8.pdf"
+    )
+    issues = validate_candidate_row(
+        {
+            "lifecycle_status": LIFECYCLE_CANDIDATE,
+            "reference_type": "fuel_heating_values",
+            "source_id": "src_tw_moenv_fuel_heating_values",
+            "source_locator": locator,
+            "source_url": locator,
+            "source_location": locator,
+            "factor_value": "",
+            "factor_year": "",
+            "geography": "",
+            "factor_category": "",
+            "numerator_unit": "",
+            "factor_unit": "",
+            "snapshot_id": "snap_src_tw_moenv_fuel_heating_values_f809a27150c0",
+            "parser_version": "reference_sync_v1",
+            "source_sha256": "f809a27150c014e1cb3bde3133cc433a8be5fe1f14105e63",
+            "reason": "factor_value is not numeric",
+            "notes": "Misclassified heating-value candidate.",
+        }
+    )
+    assert WRONG_DOCUMENT_FOR_SOURCE in issues
+    assert issues[0] == WRONG_DOCUMENT_FOR_SOURCE
+    assert "factor_value is not numeric" in issues
 
 
 def test_emission_factor_pdf_cannot_satisfy_heating_value_dependency() -> None:

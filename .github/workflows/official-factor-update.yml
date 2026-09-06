@@ -1,7 +1,9 @@
 # Official emission-factor update v1.
 # Discovers, downloads, hashes, parses, and proposes versioned factor rows.
-# Never auto-merges. Merging the review PR is the human approval that
-# enables the new coefficients. Download failures must not delete old data.
+# Weekly schedule plus workflow_dispatch. Unchanged official data exits 0.
+# Never auto-merges. Steel CFP_P_02 rows stay candidates; this workflow
+# must not overwrite active steel factors or rewrite historical results.
+# Download/parse failures fail closed with a readable review reason.
 #
 # REQUIREMENT: This workflow file must exist on the repository DEFAULT branch
 # for GitHub scheduled runs to execute.
@@ -44,6 +46,7 @@ jobs:
         id: sync
         env:
           PYTHONPATH: src
+          MOENV_API_KEY: ${{ secrets.MOENV_API_KEY }}
         run: |
           set -euo pipefail
           RETRIEVED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -66,6 +69,7 @@ jobs:
               "already_known" in fetch_text
               and "staged" not in fetch_text
               and not proposal.get("activatable_candidate_ids")
+              and not proposal.get("steel_candidate_ids")
           )
           open_pr = bool(proposal.get("open_pr"))
           manual = bool(proposal.get("manual_review_required"))
@@ -181,6 +185,7 @@ jobs:
             data/reference/reference_candidates.csv \
             data/reference/reference_snapshots.csv \
             data/reference/reference_activations.csv \
+            data/reference/purchased_steel_factor_candidates.csv \
             data/reference/official_factor_update_proposal.json \
             data/reference/official_factor_update_review.md \
             data/reference_snapshots \
@@ -200,19 +205,22 @@ jobs:
           Automated official-source check found one or more **validated** coefficient candidates.
 
           ### Approval semantics
-          - Merging this PR **is** human approval to enable the new versioned registry rows.
+          - Merging this PR is **not** automatic activation of purchased-steel CFP_P_02 factors.
+          - Steel rows stay **candidates** until a reviewer fills applicability metadata and activates them separately.
+          - This workflow must **not** overwrite active steel factors or rewrite historical calculation results.
+          - Electricity/fuel validated rows may still be append-only registry proposals.
           - This PR must **NOT** be auto-merged or auto-approved.
-          - Coefficients are append-only. Historical rows stay in the registry.
-          - Publication date is not the same as the factor effective period.
-          - Recalculating an older reporting year must still select the factor whose validity covers that activity period.
+          - Publication date and announcementyear are not government valid_from.
+          - Human approval is required before any coefficient is used for reporting.
 
           ### Reviewer checklist
           1. Open \`data/reference/official_factor_update_review.md\`
-          2. Confirm official source URL, snapshot SHA-256, units, and applicable years
-          3. Confirm old vs new values and percent change
-          4. Confirm GWP assessment basis (AR5 vs AR6) is not mixed
-          5. Confirm purchased-steel average-data factors are **not** being invented
+          2. Confirm official source URL, snapshot SHA-256, units, and data/announcement years
+          3. For steel candidates, confirm product names stay distinct and that lifecycle boundary, geography, technology, and approved_for_reporting_from/to are **not** invented from the API
+          4. Confirm old vs new electricity/fuel values and percent change
+          5. Confirm GWP assessment basis (AR5 vs AR6) is not mixed
           6. If a source was blocked (401/403/CAPTCHA/login/robots), do not treat missing downloads as approval to delete old data
+          7. Do not copy announcementyear into valid_from
 
           Review Markdown and activation audit are part of this PR.
           EOF

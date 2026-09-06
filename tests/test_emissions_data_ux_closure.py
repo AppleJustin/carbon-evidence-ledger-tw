@@ -498,7 +498,7 @@ def test_scope_hero_caption_keeps_scope_labels() -> None:
     states = {
         "scope_1": {"state": "pending", "value": None},
         "scope_2": {"state": "calculated", "value": 23.70},
-        "scope_3": {"state": "unsupported", "value": None},
+        "scope_3": {"state": "empty", "value": None},
     }
     zh = labeled_scope_hero_caption(states, ZH)
     en = labeled_scope_hero_caption(states, EN)
@@ -516,15 +516,7 @@ def test_scope_hero_caption_keeps_scope_labels() -> None:
     )
     assert "尚未計算" not in zh
     assert "Not calculated" not in en
-    assert t("dash.hero.scope3_version", ZH) == (
-        "Scope 3 尚未納入計算。本版本總排放量僅包含 Scope 1 與 Scope 2；"
-        "採購、委外運輸等價值鏈排放不包含在目前總量中。"
-    )
-    assert t("dash.hero.scope3_version", EN) == (
-        "Scope 3 is not included in this calculation. The current total "
-        "covers Scope 1 and Scope 2 only; purchased goods, outsourced "
-        "transport, and other value-chain emissions are excluded."
-    )
-    assert "0 tCO" not in t("dash.hero.scope3_version", ZH)
-    assert "0 tCO" not in t("dash.hero.scope3_version", EN)
+    assert t("dash.scope3.empty", ZH) == "目前尚無可納入的 Scope 3 計算結果。"
+    assert "0 tCO" not in t("dash.scope3.empty", ZH)
+    assert "0 tCO" not in t("dash.scope3.empty", EN)
     assert t("nav.evidence", EN) == "Emissions Data & Calculations"

@@ -140,6 +140,11 @@ def _run_validated_activity_pipeline(
     normalized = normalize_activity_records(accepted_activities)
 
     registry = validate_factor_registry(reference_directory)
+    from carbon_ledger.steel_factor_catalog import merge_steel_factors
+
+    emission_factors = merge_steel_factors(
+        registry.emission_factors, reference_directory
+    )
     activities_for_matching = accepted_activities.merge(
         normalized[["record_id", "normalized_unit", "normalization_status"]],
         on="record_id",
@@ -150,7 +155,7 @@ def _run_validated_activity_pipeline(
     )
     matching = match_activity_factors(
         activities_for_matching,
-        registry.emission_factors,
+        emission_factors,
         registry.calculation_dependencies,
         heating_values=registry.fuel_heating_values,
     )
@@ -161,7 +166,7 @@ def _run_validated_activity_pipeline(
         normalized,
         matching.candidate_matches,
         matching.activity_readiness,
-        registry.emission_factors,
+        emission_factors,
         heating_values=registry.fuel_heating_values,
         gwp_values=registry.gwp_values,
         engineering_conversions=registry.engineering_conversions,

@@ -43,17 +43,20 @@ CALC_STATUS_COLORS: dict[str, str] = {
     "blocked_missing_conversion": COLOR_MISSING_CONVERSION,
     "blocked_natural_gas_type_required": COLOR_MISSING_CONVERSION,
     "no_factor_configured": COLOR_MISSING_FACTOR,
+    "no_matching_factor": COLOR_MISSING_FACTOR,
     "not_emissions_activity": COLOR_SUPPORTING,
 }
 
 ISSUE_GAP_COLORS: dict[str, str] = {
     "blocked_missing_conversion": COLOR_MISSING_CONVERSION,
     "no_factor_configured": COLOR_MISSING_FACTOR,
+    "no_matching_factor": COLOR_MISSING_FACTOR,
 }
 
 ISSUE_GAP_LABEL_KEYS: dict[str, str] = {
     "blocked_missing_conversion": "chart.issue.missing_conversion",
     "no_factor_configured": "chart.issue.missing_factor",
+    "no_matching_factor": "chart.issue.missing_factor",
 }
 
 
@@ -759,6 +762,7 @@ def status_kind_for_calculation(code: str) -> str:
         "blocked_missing_conversion": "warning",
         "blocked_natural_gas_type_required": "warning",
         "no_factor_configured": "attention",
+        "no_matching_factor": "attention",
         "not_emissions_activity": "muted",
     }
     return mapping.get(code, "muted")

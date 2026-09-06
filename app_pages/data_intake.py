@@ -14,6 +14,7 @@ from carbon_ledger.intake import (
     CONFIDENCE_LOW,
     CONFIDENCE_MEDIUM,
     READINESS_NEEDS_CONFIRM,
+    READINESS_NO_MATCHING_FACTOR,
     READINESS_READY,
     READINESS_UNSUPPORTED,
     ColumnMapping,
@@ -22,7 +23,6 @@ from carbon_ledger.intake import (
     IntakeMetadata,
     blank_template_csv_bytes,
     blank_template_xlsx_bytes,
-    classify_activity_analysis_readiness,
     default_value_maps,
     detect_header_row,
     extract_diesel_vehicle_context_from_text,
@@ -32,7 +32,6 @@ from carbon_ledger.intake import (
     list_xlsx_sheet_names,
     load_raw_tabular_frame,
     parse_uploaded_table,
-    purchased_steel_missing_fields,
     rank_xlsx_worksheets,
     reference_only_columns,
     suggest_column_mapping_with_confidence,
@@ -94,6 +93,20 @@ from carbon_ledger.ui.intake_validation import (
     clear_intake_validation_lock,
     execute_intake_validation,
     recover_stale_intake_validation,
+)
+from carbon_ledger.ui.purchased_steel_confirmation import (
+    accepted_activities_for_review,
+    accepted_review_preview,
+    attach_coverage_readiness,
+    pipeline_calculation_status_by_record,
+    render_purchased_steel_confirmation_forms,
+    render_steel_confirm_flash,
+    render_steel_pipeline_outcome,
+    render_steel_status_legend,
+)
+from carbon_ledger.ui.refrigerant_boundary_form import (
+    render_confirmation_flash,
+    render_refrigerant_boundary_confirmation,
 )
 from carbon_ledger.ui.state import (
     STATE_INTAKE_BYTES,
@@ -303,36 +316,14 @@ HELD_ISSUE_CODES = frozenset(
 
 
 def _accepted_readiness_rows(accepted: pd.DataFrame) -> pd.DataFrame:
-    """Attach the pre-analysis readiness bucket to format-valid rows."""
-    if accepted is None or accepted.empty:
-        return pd.DataFrame()
-    rows = accepted.copy()
-    rows["_analysis_readiness"] = [
-        classify_activity_analysis_readiness(
-            activity_type=str(row.get("activity_type") or ""),
-            fuel_subtype=str(row.get("fuel_subtype") or ""),
-            process_use=str(row.get("process_use") or ""),
-            activity_start=row.get("activity_start_date"),
-            activity_end=row.get("activity_end_date"),
-            calculation_method=str(row.get("calculation_method") or ""),
-            supplier_name=str(row.get("supplier_name") or ""),
-            steel_product_type=str(row.get("steel_product_type") or ""),
-            product_identifier=str(row.get("product_identifier") or ""),
-            emission_factor_value=row.get("emission_factor_value"),
-            emission_factor_unit=str(row.get("emission_factor_unit") or ""),
-            factor_boundary=str(row.get("factor_boundary") or ""),
-            factor_year=row.get("factor_year"),
-            factor_source_id=str(row.get("factor_source_id") or ""),
-            evidence_reference=str(row.get("evidence_reference") or ""),
-            source_document_id=str(row.get("source_document_id") or ""),
-            includes_tier1_to_reporting_company_transport=row.get(
-                "includes_tier1_to_reporting_company_transport"
-            ),
-            factor_geography=str(row.get("factor_geography") or ""),
-        )
-        for _, row in rows.iterrows()
-    ]
-    return rows
+    """Attach the UI coverage bucket to format-valid rows."""
+    pipeline = get_current_result(st.session_state)
+    return attach_coverage_readiness(
+        accepted,
+        calculation_status_by_record=pipeline_calculation_status_by_record(
+            pipeline
+        ),
+    )
 
 
 def _accepted_review_preview(
@@ -341,76 +332,16 @@ def _accepted_review_preview(
     status: str,
     issue: str,
 ) -> pd.DataFrame:
-    """Customer-facing preview for one accepted-row readiness bucket."""
-    preview = rows[
-        [
-            "activity_type",
-            "activity_value",
-            "unit",
-            "activity_start_date",
-            "activity_end_date",
-            "site_id",
-        ]
-    ].copy()
-    preview["activity_type"] = preview["activity_type"].map(
-        lambda code: t(f"activity.{code}", lang)
-    )
-    preview["site_id"] = preview["site_id"].map(
-        lambda value: customer_site_display(value, lang)
-    )
-    preview["status"] = status
-    issues: list[str] = []
-    for _, row in rows.iterrows():
-        if str(row.get("activity_type") or "") != "purchased_steel":
-            issues.append(issue)
-            continue
-        inbound = str(
-            row.get("includes_tier1_to_reporting_company_transport") or ""
-        ).strip().lower()
-        if inbound == "true":
-            issues.append(t("intake.issue.steel_inbound", lang))
-            continue
-        missing = purchased_steel_missing_fields(
-            calculation_method=str(row.get("calculation_method") or ""),
-            supplier_name=str(row.get("supplier_name") or ""),
-            steel_product_type=str(row.get("steel_product_type") or ""),
-            product_identifier=str(row.get("product_identifier") or ""),
-            emission_factor_value=row.get("emission_factor_value"),
-            emission_factor_unit=str(row.get("emission_factor_unit") or ""),
-            factor_boundary=str(row.get("factor_boundary") or ""),
-            factor_year=row.get("factor_year"),
-            factor_source_id=str(row.get("factor_source_id") or ""),
-            evidence_reference=str(row.get("evidence_reference") or ""),
-            source_document_id=str(row.get("source_document_id") or ""),
-            includes_tier1_to_reporting_company_transport=row.get(
-                "includes_tier1_to_reporting_company_transport"
-            ),
-            factor_geography=str(row.get("factor_geography") or ""),
-        )
-        if missing == ("calculation_method",):
-            issues.append(t("intake.issue.steel_no_method", lang))
-            continue
-        if missing:
-            labels = [
-                customer_schema_label(name, lang) for name in missing
-            ]
-            issues.append(
-                t("intake.issue.steel_missing", lang, fields="、".join(labels))
-            )
-            continue
-        issues.append(issue)
-    preview["issue"] = issues
-    return preview.rename(
-        columns={
-            "activity_type": t("intake.field.activity_type", lang),
-            "activity_value": t("intake.field.activity_value", lang),
-            "unit": t("intake.field.unit", lang),
-            "activity_start_date": t("intake.field.start", lang),
-            "activity_end_date": t("intake.field.end", lang),
-            "site_id": t("intake.field.site_id", lang),
-            "status": t("intake.col.status", lang),
-            "issue": t("intake.col.issue", lang),
-        }
+    """Customer-facing preview for one accepted-row coverage bucket."""
+    pipeline = get_current_result(st.session_state)
+    return accepted_review_preview(
+        rows,
+        lang=lang,
+        status=status,
+        issue=issue,
+        calculation_status_by_record=pipeline_calculation_status_by_record(
+            pipeline
+        ),
     )
 
 
@@ -2360,6 +2291,12 @@ with nav_cols[0]:
 
 st.write("")
 render_section_header(t("intake.step3", lang))
+render_steel_status_legend(lang)
+render_steel_confirm_flash(lang)
+pipeline = get_current_result(st.session_state)
+render_confirmation_flash(pipeline, lang)
+render_refrigerant_boundary_confirmation(pipeline, lang)
+render_steel_pipeline_outcome(lang, pipeline)
 _render_mapping_history()
 rejected = result.rejected_rows
 held_count = 0
@@ -2375,11 +2312,15 @@ if rejected is not None and not getattr(rejected, "empty", True):
             held_count += 1
         else:
             cannot_count += 1
-accepted = result.accepted_activities
+accepted = accepted_activities_for_review(result.accepted_activities)
 readiness_rows = _accepted_readiness_rows(accepted)
+status_map = pipeline_calculation_status_by_record(
+    get_current_result(st.session_state)
+)
 if readiness_rows.empty:
     ready_rows = readiness_rows.copy()
     accepted_needs_confirm = readiness_rows.copy()
+    no_factor_rows = readiness_rows.copy()
     unsupported_rows = readiness_rows.copy()
 else:
     ready_rows = readiness_rows[
@@ -2387,6 +2328,9 @@ else:
     ].copy()
     accepted_needs_confirm = readiness_rows[
         readiness_rows["_analysis_readiness"] == READINESS_NEEDS_CONFIRM
+    ].copy()
+    no_factor_rows = readiness_rows[
+        readiness_rows["_analysis_readiness"] == READINESS_NO_MATCHING_FACTOR
     ].copy()
     unsupported_rows = readiness_rows[
         readiness_rows["_analysis_readiness"] == READINESS_UNSUPPORTED
@@ -2403,6 +2347,11 @@ with onboarding_target("calculation-coverage"):
                 "amber",
             ),
             (
+                len(no_factor_rows),
+                t("intake.result_no_factor", lang),
+                "amber",
+            ),
+            (
                 len(unsupported_rows),
                 t("intake.result_unsupported", lang),
                 "blue",
@@ -2411,10 +2360,16 @@ with onboarding_target("calculation-coverage"):
         ],
         tour_target="coverage-summary",
     )
-tab_ok, tab_fix, tab_unsupported, tab_bad = st.tabs(
+render_purchased_steel_confirmation_forms(
+    accepted,
+    lang,
+    calculation_status_by_record=status_map,
+)
+tab_ok, tab_fix, tab_no_factor, tab_unsupported, tab_bad = st.tabs(
     [
         t("intake.result_accepted", lang),
         t("intake.result_needs_confirm", lang),
+        t("intake.result_no_factor", lang),
         t("intake.result_unsupported", lang),
         t("intake.result_invalid", lang),
     ]
@@ -2482,6 +2437,19 @@ with tab_fix:
         )
     elif accepted_needs_confirm.empty:
         st.caption(t("intake.empty.needs_confirm", lang))
+with tab_no_factor:
+    if not no_factor_rows.empty:
+        st.dataframe(
+            _accepted_review_preview(
+                no_factor_rows,
+                status=t("intake.result_no_factor", lang),
+                issue=t("intake.issue.steel_average_no_factor", lang),
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.caption(t("intake.empty.no_factor", lang))
 with tab_unsupported:
     if not unsupported_rows.empty:
         unsupported_names = sorted(
@@ -2586,6 +2554,10 @@ if accepted is not None and not accepted.empty:
     st.markdown(
         f"**{t('intake.review.needs_confirm', lang)}：** "
         f"{readiness.get('needs_confirm', 0)}"
+    )
+    st.markdown(
+        f"**{t('intake.review.no_factor', lang)}：** "
+        f"{int(len(no_factor_rows))}"
     )
     st.markdown(
         f"**{t('intake.review.unsupported', lang)}：** "

@@ -6,12 +6,13 @@ V1 supports two GHG Protocol Category 1 methods only:
 - average_data: a registered, versioned secondary factor matched by product,
   year, and geography
 
-This module does not invent a generic steel factor, does not treat missing
-values as zero, and does not mix Tier 1 → reporting-company inbound
-transport into Category 1. That inbound leg stays on Category 4
-``third_party_transport``. Cradle-to-gate Category 1 may include upstream
-supply-chain transport before the Tier 1 supplier (for example Tier 2 →
-Tier 1).
+This module does not invent a generic steel factor and does not treat
+missing values as zero. Category 1 is the purchased-goods cradle-to-gate
+result. Pre-Tier-1 supply-chain transport may already sit inside that
+factor boundary. Tier 1 → reporting-company transport is classified by
+who owns or controls the vehicle: third-party carriage needs a Category 4
+split; company-controlled carriage needs a Scope 1 or 2 split. Blank
+factor-inclusion flags are never treated as false.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -27,6 +28,7 @@ from typing import Any
 import pandas as pd
 
 from carbon_ledger.calculate import OUTPUT_COLUMNS
+from carbon_ledger.cfp_p_02 import redact_api_key_from_url
 
 FORMULA_ID = "purchased_mass_times_cradle_to_gate_factor"
 FORMULA_VERSION = "1.0"
@@ -47,6 +49,7 @@ KG_PER_TONNE = Decimal("1000")
 
 STATUS_CALCULATED = "calculated"
 STATUS_NO_FACTOR_CONFIGURED = "no_factor_configured"
+STATUS_NO_MATCHING_FACTOR = "no_matching_factor"
 STATUS_BLOCKED_MISSING_RECORD_ID = "blocked_missing_record_id"
 STATUS_BLOCKED_MISSING_METHOD = "blocked_missing_calculation_method"
 STATUS_BLOCKED_UNSUPPORTED_METHOD = "blocked_unsupported_calculation_method"
@@ -67,10 +70,73 @@ STATUS_BLOCKED_MISSING_GEOGRAPHY = "blocked_missing_factor_geography"
 STATUS_BLOCKED_MISSING_FACTOR_YEAR = "blocked_missing_factor_year"
 STATUS_BLOCKED_AMBIGUOUS_FACTOR = "blocked_ambiguous_factor"
 STATUS_BLOCKED_TRANSPORT_NOT_CATEGORY_1 = "blocked_transport_not_category_1"
+STATUS_BLOCKED_FACTOR_INCLUSION_UNCONFIRMED = (
+    "blocked_factor_inclusion_unconfirmed"
+)
+STATUS_BLOCKED_TRANSPORT_CONTROL_UNCONFIRMED = (
+    "blocked_transport_control_unconfirmed"
+)
+STATUS_BLOCKED_TIER1_INBOUND_REQUIRES_CATEGORY4_SPLIT = (
+    "blocked_tier1_inbound_transport_requires_category4_split"
+)
+STATUS_BLOCKED_COMPANY_CONTROLLED_TRANSPORT_REQUIRES_SCOPE1_OR2_SPLIT = (
+    "blocked_company_controlled_transport_requires_scope1_or2_split"
+)
+CONTROL_UNKNOWN = "unknown"
+CONTROL_REPORTING_COMPANY = "reporting_company"
+CONTROL_THIRD_PARTY = "third_party"
+CONTROL_NOT_APPLICABLE = "not_applicable"
+ALLOWED_TRANSPORT_CONTROLS = frozenset(
+    {
+        CONTROL_UNKNOWN,
+        CONTROL_REPORTING_COMPANY,
+        CONTROL_THIRD_PARTY,
+        CONTROL_NOT_APPLICABLE,
+    }
+)
+_INCLUSION_TRUE = frozenset(
+    {
+        "true",
+        "1",
+        "yes",
+        "y",
+        "included",
+        "include",
+        "包含",
+        "是",
+    }
+)
+_INCLUSION_FALSE = frozenset(
+    {
+        "false",
+        "0",
+        "no",
+        "n",
+        "excluded",
+        "exclude",
+        "不包含",
+        "否",
+    }
+)
+_CONTROL_ALIASES = {
+    "unknown": CONTROL_UNKNOWN,
+    "unconfirmed": CONTROL_UNKNOWN,
+    "尚未確認": CONTROL_UNKNOWN,
+    "reporting_company": CONTROL_REPORTING_COMPANY,
+    "company": CONTROL_REPORTING_COMPANY,
+    "本公司擁有或控制": CONTROL_REPORTING_COMPANY,
+    "third_party": CONTROL_THIRD_PARTY,
+    "third-party": CONTROL_THIRD_PARTY,
+    "第三方擁有或控制": CONTROL_THIRD_PARTY,
+    "not_applicable": CONTROL_NOT_APPLICABLE,
+    "n/a": CONTROL_NOT_APPLICABLE,
+    "na": CONTROL_NOT_APPLICABLE,
+}
 
 BLOCKED_STATUSES = frozenset(
     {
         STATUS_NO_FACTOR_CONFIGURED,
+        STATUS_NO_MATCHING_FACTOR,
         STATUS_BLOCKED_MISSING_RECORD_ID,
         STATUS_BLOCKED_MISSING_METHOD,
         STATUS_BLOCKED_UNSUPPORTED_METHOD,
@@ -89,6 +155,10 @@ BLOCKED_STATUSES = frozenset(
         STATUS_BLOCKED_MISSING_FACTOR_YEAR,
         STATUS_BLOCKED_AMBIGUOUS_FACTOR,
         STATUS_BLOCKED_TRANSPORT_NOT_CATEGORY_1,
+        STATUS_BLOCKED_FACTOR_INCLUSION_UNCONFIRMED,
+        STATUS_BLOCKED_TRANSPORT_CONTROL_UNCONFIRMED,
+        STATUS_BLOCKED_TIER1_INBOUND_REQUIRES_CATEGORY4_SPLIT,
+        STATUS_BLOCKED_COMPANY_CONTROLLED_TRANSPORT_REQUIRES_SCOPE1_OR2_SPLIT,
     }
 )
 
@@ -126,8 +196,11 @@ class PurchasedSteelEvidence:
     record_type: str = ""
     activity_type: str = ACTIVITY_TYPE
     product_identifier: str = ""
-    includes_tier1_to_reporting_company_transport: bool = False
-    includes_pre_tier1_supply_chain_transport: bool = False
+    factor_includes_tier1_to_reporting_company_transport: bool | None = None
+    tier1_to_reporting_company_transport_control: str = CONTROL_UNKNOWN
+    includes_tier1_to_reporting_company_transport: bool | None = None
+    includes_pre_tier1_supply_chain_transport: bool | None = None
+    technology: str = ""
 
 
 @dataclass(frozen=True)
@@ -146,6 +219,18 @@ class RegisteredSteelFactor:
     factor_version: str = ""
     valid_from: str = ""
     valid_to: str = ""
+    includes_pre_tier1_supply_chain_transport: bool | None = None
+    technology: str = ""
+    approved_for_reporting_from: str = ""
+    approved_for_reporting_to: str = ""
+    source_record_id: str = ""
+    source_url: str = ""
+    snapshot_hash: str = ""
+    is_secondary_or_proxy: str = ""
+    announcement_year: str = ""
+    official_name: str = ""
+    publisher: str = ""
+    retrieved_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -192,6 +277,18 @@ class PurchasedSteelCalculationResult:
     purchased_unit: str = ""
     source_document_id: str = ""
     factor_source_id: str = ""
+    factor_version: str = ""
+    source_record_id: str = ""
+    source_url: str = ""
+    snapshot_hash: str = ""
+    match_reason: str = ""
+    approved_for_reporting_from: str = ""
+    approved_for_reporting_to: str = ""
+    technology: str = ""
+    official_name: str = ""
+    publisher: str = ""
+    announcement_year: str = ""
+    retrieved_at: str = ""
 
     def to_calculation_row(self) -> dict[str, Any]:
         row = {column: pd.NA for column in OUTPUT_COLUMNS}
@@ -239,6 +336,22 @@ class PurchasedSteelCalculationResult:
                 "ghg_scope": self.ghg_scope,
                 "scope3_category": self.scope3_category,
                 "scope_3_category": "category_1",
+                "factor_version": self.factor_version or pd.NA,
+                "source_record_id": self.source_record_id or pd.NA,
+                "source_url": self.source_url or pd.NA,
+                "snapshot_hash": self.snapshot_hash or pd.NA,
+                "match_reason": self.match_reason or pd.NA,
+                "approved_for_reporting_from": (
+                    self.approved_for_reporting_from or pd.NA
+                ),
+                "approved_for_reporting_to": (
+                    self.approved_for_reporting_to or pd.NA
+                ),
+                "technology": self.technology or pd.NA,
+                "official_name": self.official_name or self.steel_product_type or pd.NA,
+                "publisher": self.publisher or pd.NA,
+                "announcement_year": self.announcement_year or pd.NA,
+                "retrieved_at": self.retrieved_at or pd.NA,
             }
         )
         return row
@@ -273,6 +386,62 @@ def _is_true(value: Any) -> bool:
     if value is False or value is None:
         return False
     return _text(value).lower() in {"true", "1", "yes", "是"}
+
+
+def serialize_tri_state_bool(value: bool | None) -> str:
+    """Canonical overlay token. Unknown stays blank, never false."""
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    return ""
+
+
+def parse_tri_state_bool(value: Any) -> bool | None:
+    """Return True/False only for explicit values. Blank stays unknown."""
+    if value is True:
+        return True
+    if value is False:
+        return False
+    text = _text(value)
+    if not text:
+        return None
+    token = text.casefold()
+    if text in _INCLUSION_TRUE or token in _INCLUSION_TRUE:
+        return True
+    if text in _INCLUSION_FALSE or token in _INCLUSION_FALSE:
+        return False
+    return None
+
+
+def parse_tier1_transport_control(value: Any) -> str:
+    """Canonical control code. Unknown tokens stay unknown, never inferred."""
+    text = _text(value)
+    if not text:
+        return CONTROL_UNKNOWN
+    direct = _CONTROL_ALIASES.get(text)
+    if direct:
+        return direct
+    return _CONTROL_ALIASES.get(text.casefold(), CONTROL_UNKNOWN)
+
+
+def parse_factor_includes_tier1_transport(record: Mapping[str, Any]) -> bool | None:
+    """Prefer the factor-inclusion field; read the legacy flag conservatively."""
+    if "factor_includes_tier1_to_reporting_company_transport" in record:
+        parsed = parse_tri_state_bool(
+            record.get("factor_includes_tier1_to_reporting_company_transport")
+        )
+        if parsed is not None:
+            return parsed
+        if _text(record.get("factor_includes_tier1_to_reporting_company_transport")):
+            return None
+    if "includes_tier1_to_reporting_company_transport" in record:
+        return parse_tri_state_bool(
+            record.get("includes_tier1_to_reporting_company_transport")
+        )
+    return parse_tri_state_bool(
+        record.get("factor_includes_tier1_to_reporting_company_transport")
+    )
 
 
 def _coerce_year(value: Any) -> int | None:
@@ -403,12 +572,19 @@ def parse_purchased_steel_evidence(
     )
     activity_type = _text(record.get("activity_type")) or ACTIVITY_TYPE
     record_type = _text(record.get("record_type"))
-    inbound = _is_true(
-        record.get("includes_tier1_to_reporting_company_transport")
+    inclusion = parse_factor_includes_tier1_transport(record)
+    control = parse_tier1_transport_control(
+        record.get("tier1_to_reporting_company_transport_control")
     )
-    pre_tier1 = _is_true(
+    if inclusion is False:
+        control = CONTROL_NOT_APPLICABLE
+    elif inclusion is True and control == CONTROL_NOT_APPLICABLE:
+        control = CONTROL_UNKNOWN
+    pre_tier1 = parse_tri_state_bool(
         record.get("includes_pre_tier1_supply_chain_transport")
-    ) or _is_true(record.get("includes_tier2_to_tier1_transport"))
+    )
+    if pre_tier1 is None and _is_true(record.get("includes_tier2_to_tier1_transport")):
+        pre_tier1 = True
     return PurchasedSteelEvidence(
         record_id=_text(record.get("record_id")),
         calculation_method=_text(record.get("calculation_method")),
@@ -431,8 +607,11 @@ def parse_purchased_steel_evidence(
         product_identifier=_text(
             record.get("product_identifier") or record.get("product_id")
         ),
-        includes_tier1_to_reporting_company_transport=inbound,
+        factor_includes_tier1_to_reporting_company_transport=inclusion,
+        tier1_to_reporting_company_transport_control=control,
+        includes_tier1_to_reporting_company_transport=inclusion,
         includes_pre_tier1_supply_chain_transport=pre_tier1,
+        technology=_text(record.get("technology") or record.get("process")),
     )
 
 
@@ -499,6 +678,35 @@ def registered_steel_factors_from_frame(
                 factor_version=version,
                 valid_from=_text(row.get("valid_from")),
                 valid_to=_text(row.get("valid_to")),
+                includes_pre_tier1_supply_chain_transport=parse_tri_state_bool(
+                    row.get("includes_pre_tier1_supply_chain_transport")
+                ),
+                technology=_text(row.get("technology") or row.get("process")),
+                approved_for_reporting_from=_text(
+                    row.get("approved_for_reporting_from")
+                ),
+                approved_for_reporting_to=_text(
+                    row.get("approved_for_reporting_to")
+                ),
+                source_record_id=_text(row.get("source_record_id")),
+                source_url=redact_api_key_from_url(
+                    _text(row.get("source_url") or row.get("source_locator"))
+                ),
+                snapshot_hash=_text(
+                    row.get("snapshot_hash") or row.get("source_sha256")
+                ),
+                is_secondary_or_proxy=_text(row.get("is_secondary_or_proxy"))
+                or "true",
+                announcement_year=_text(
+                    row.get("announcement_year") or row.get("official_announcementyear")
+                ),
+                official_name=_text(
+                    row.get("official_name") or row.get("steel_product_type")
+                ),
+                publisher=_text(
+                    row.get("publisher") or row.get("official_departmentname")
+                ),
+                retrieved_at=_text(row.get("retrieved_at")),
             )
         )
     return tuple(parsed)
@@ -507,16 +715,19 @@ def registered_steel_factors_from_frame(
 def _factor_covers_reporting_year(
     factor: RegisteredSteelFactor, reporting_year: int
 ) -> bool:
-    """Return True only when validity covers the full calendar reporting year.
+    """Return True only when internally approved applicability covers the year.
 
-    ``factor_year`` is the coefficient data year and is not compared to
-    ``reporting_year``. Missing or malformed ``valid_from`` cannot confirm
-    coverage. A blank ``valid_to`` is open-ended; a malformed ``valid_to``
-    is not treated as open-ended and cannot match.
+    Official announcementyear is never used as coverage. Prefer
+    ``approved_for_reporting_from`` / ``approved_for_reporting_to``. Fall back
+    to registry ``valid_from`` / ``valid_to`` only for already-reviewed test
+    rows that stored coverage there. A blank end date is open-ended only when
+    the start date is present and internally approved.
     """
     year_start = date(reporting_year, 1, 1)
     year_end = date(reporting_year, 12, 31)
-    valid_from = _parse_optional_date(factor.valid_from)
+    start_text = factor.approved_for_reporting_from or factor.valid_from
+    end_text = factor.approved_for_reporting_to or factor.valid_to
+    valid_from = _parse_optional_date(start_text)
     if (
         valid_from is None
         or valid_from == "invalid"
@@ -524,7 +735,7 @@ def _factor_covers_reporting_year(
         or valid_from > year_start
     ):
         return False
-    valid_to = _parse_optional_date(factor.valid_to)
+    valid_to = _parse_optional_date(end_text)
     if valid_to == "invalid":
         return False
     if valid_to is None:
@@ -541,24 +752,32 @@ def match_average_data_factor(
     reporting_year: int,
 ) -> tuple[RegisteredSteelFactor | None, str]:
     """Match one registered secondary factor. Do not pick a fallback version."""
+    from carbon_ledger.cfp_p_02 import is_generic_steel_label
+
     product_type = evidence.steel_product_type
+    if is_generic_steel_label(product_type):
+        return None, STATUS_BLOCKED_MISSING_PRODUCT_TYPE
     geography = evidence.factor_geography
+    technology = _text(evidence.technology)
     matches = [
         factor
         for factor in registered_factors
-        if factor.steel_product_type == product_type
+        if (
+            factor.steel_product_type == product_type
+            or factor.official_name == product_type
+        )
         and factor.factor_geography == geography
         and _factor_covers_reporting_year(factor, reporting_year)
+        and (
+            not factor.technology
+            or factor.technology == technology
+        )
+        and factor.factor_boundary == FACTOR_BOUNDARY_CRADLE_TO_GATE
+        and factor.factor_unit.numerator in ALLOWED_CO2E_NUMERATORS
+        and factor.factor_unit.denominator in ALLOWED_MASS_UNITS
     ]
     if not matches:
-        product_matches = [
-            factor
-            for factor in registered_factors
-            if factor.steel_product_type == product_type
-        ]
-        if registered_factors and not product_matches and product_type:
-            return None, STATUS_BLOCKED_PRODUCT_MISMATCH
-        return None, STATUS_NO_FACTOR_CONFIGURED
+        return None, STATUS_NO_MATCHING_FACTOR
     if len(matches) > 1:
         return None, STATUS_BLOCKED_AMBIGUOUS_FACTOR
     return matches[0], ""
@@ -571,12 +790,83 @@ def _is_standalone_transport_record(evidence: PurchasedSteelEvidence) -> bool:
     )
 
 
-def _includes_tier1_to_reporting_company_transport(
+def _standalone_transport_status(
     evidence: PurchasedSteelEvidence,
-) -> bool:
-    if evidence.includes_tier1_to_reporting_company_transport:
-        return True
-    return _is_standalone_transport_record(evidence)
+) -> tuple[str, str, str] | None:
+    if not _is_standalone_transport_record(evidence):
+        return None
+    return (
+        STATUS_BLOCKED_TRANSPORT_NOT_CATEGORY_1,
+        (
+            "A standalone third-party transport record is not Scope 3 "
+            "Category 1 purchased steel."
+        ),
+        "activity_type",
+    )
+
+
+def _factor_transport_split_status(
+    evidence: PurchasedSteelEvidence,
+) -> tuple[str, str, str] | None:
+    """Return (status, message, field) when the factor boundary blocks Category 1."""
+    inclusion = evidence.factor_includes_tier1_to_reporting_company_transport
+    if inclusion is None:
+        inclusion = evidence.includes_tier1_to_reporting_company_transport
+    if inclusion is None:
+        return (
+            STATUS_BLOCKED_FACTOR_INCLUSION_UNCONFIRMED,
+            (
+                "Confirm whether the emission factor includes Tier 1 "
+                "supplier to reporting-company transport before calculating "
+                "Category 1. Blank values are not treated as excluded."
+            ),
+            "factor_includes_tier1_to_reporting_company_transport",
+        )
+    if inclusion is False:
+        return None
+    control = parse_tier1_transport_control(
+        evidence.tier1_to_reporting_company_transport_control
+    )
+    if control in {CONTROL_UNKNOWN, CONTROL_NOT_APPLICABLE, ""}:
+        return (
+            STATUS_BLOCKED_TRANSPORT_CONTROL_UNCONFIRMED,
+            (
+                "The factor includes Tier 1 to reporting-company transport, "
+                "but vehicle ownership/control is not confirmed. Category 1 "
+                "is not calculated and Category 4 is not inferred."
+            ),
+            "tier1_to_reporting_company_transport_control",
+        )
+    if control == CONTROL_THIRD_PARTY:
+        return (
+            STATUS_BLOCKED_TIER1_INBOUND_REQUIRES_CATEGORY4_SPLIT,
+            (
+                "The factor includes third-party Tier 1 supplier to "
+                "reporting-company transport. That leg belongs in Scope 3 "
+                "Category 4. Category 1 is not calculated until a factor "
+                "without that leg, or a split, is available."
+            ),
+            "tier1_to_reporting_company_transport_control",
+        )
+    if control == CONTROL_REPORTING_COMPANY:
+        return (
+            STATUS_BLOCKED_COMPANY_CONTROLLED_TRANSPORT_REQUIRES_SCOPE1_OR2_SPLIT,
+            (
+                "The factor includes reporting-company owned or controlled "
+                "transport. That leg belongs in Scope 1 or Scope 2 by energy "
+                "source. Category 1 is not calculated until a factor without "
+                "that leg, or a split, is available."
+            ),
+            "tier1_to_reporting_company_transport_control",
+        )
+    return (
+        STATUS_BLOCKED_TRANSPORT_CONTROL_UNCONFIRMED,
+        (
+            "The factor includes Tier 1 to reporting-company transport, "
+            "but vehicle ownership/control is not confirmed."
+        ),
+        "tier1_to_reporting_company_transport_control",
+    )
 
 
 def validate_purchased_steel_evidence(
@@ -600,18 +890,11 @@ def validate_purchased_steel_evidence(
         )
         return STATUS_BLOCKED_MISSING_RECORD_ID, tuple(issues)
 
-    if _includes_tier1_to_reporting_company_transport(evidence):
-        add(
-            STATUS_BLOCKED_TRANSPORT_NOT_CATEGORY_1,
-            (
-                "Tier 1 supplier to reporting-company inbound transport must "
-                "not be mixed into Scope 3 Category 1. Keep that leg on "
-                "Category 4 third_party_transport. Cradle-to-gate Category 1 "
-                "may still include pre-Tier-1 upstream supply-chain transport."
-            ),
-            "includes_tier1_to_reporting_company_transport",
-        )
-        return STATUS_BLOCKED_TRANSPORT_NOT_CATEGORY_1, tuple(issues)
+    standalone = _standalone_transport_status(evidence)
+    if standalone is not None:
+        status, message, field = standalone
+        add(status, message, field)
+        return status, tuple(issues)
 
     method = evidence.calculation_method
     if not method:
@@ -634,6 +917,12 @@ def validate_purchased_steel_evidence(
             "calculation_method",
         )
         return STATUS_BLOCKED_UNSUPPORTED_METHOD, tuple(issues)
+
+    split = _factor_transport_split_status(evidence)
+    if split is not None:
+        status, message, field = split
+        add(status, message, field)
+        return status, tuple(issues)
 
     reporting_year = _coerce_year(evidence.reporting_year)
     if reporting_year is None:
@@ -807,10 +1096,15 @@ def _validate_average_data(
             PurchasedSteelValidationIssue(code=code, message=message, field=field)
         )
 
-    if not evidence.steel_product_type:
+    from carbon_ledger.cfp_p_02 import is_generic_steel_label
+
+    if not evidence.steel_product_type or is_generic_steel_label(
+        evidence.steel_product_type
+    ):
         add(
             STATUS_BLOCKED_MISSING_PRODUCT_TYPE,
-            "average_data requires steel_product_type for product matching.",
+            "average_data requires an exact steel_product_type. "
+            "Generic labels such as 採購鋼材 are not matched.",
             "steel_product_type",
         )
         return STATUS_BLOCKED_MISSING_PRODUCT_TYPE, tuple(issues)
@@ -846,16 +1140,23 @@ def _validate_average_data(
                 "factor_source_id",
             )
             return STATUS_BLOCKED_AMBIGUOUS_FACTOR, tuple(issues)
+        if match_status == STATUS_BLOCKED_MISSING_PRODUCT_TYPE:
+            add(
+                STATUS_BLOCKED_MISSING_PRODUCT_TYPE,
+                "Generic activity names such as 採購鋼材 are not a product type.",
+                "steel_product_type",
+            )
+            return STATUS_BLOCKED_MISSING_PRODUCT_TYPE, tuple(issues)
         add(
-            STATUS_NO_FACTOR_CONFIGURED,
+            STATUS_NO_MATCHING_FACTOR,
             (
-                "average_data can only use a registered, versioned secondary "
-                "factor with year, geography, and product type. Inline or "
-                "generic steel factors are not used."
+                "No unique approved average-data factor matches this product, "
+                "process, geography, cradle-to-gate boundary, and approved "
+                "reporting period. Newest announcement is not selected."
             ),
             "emission_factor_value",
         )
-        return STATUS_NO_FACTOR_CONFIGURED, tuple(issues)
+        return STATUS_NO_MATCHING_FACTOR, tuple(issues)
     return STATUS_CALCULATED, ()
 
 
@@ -865,6 +1166,23 @@ def _json_ready(value: Any) -> Any:
     if isinstance(value, (pd.Timestamp, date)):
         return str(value)
     return value
+
+
+def _transport_trace_fields(evidence: PurchasedSteelEvidence) -> dict[str, Any]:
+    return {
+        "factor_includes_tier1_to_reporting_company_transport": (
+            evidence.factor_includes_tier1_to_reporting_company_transport
+        ),
+        "tier1_to_reporting_company_transport_control": (
+            evidence.tier1_to_reporting_company_transport_control
+        ),
+        "includes_tier1_to_reporting_company_transport": (
+            evidence.includes_tier1_to_reporting_company_transport
+        ),
+        "includes_pre_tier1_supply_chain_transport": (
+            evidence.includes_pre_tier1_supply_chain_transport
+        ),
+    }
 
 
 def _dump_trace(payload: Mapping[str, Any]) -> str:
@@ -922,12 +1240,7 @@ def _blocked_result(
                 "factor_source_id": evidence.factor_source_id,
                 "evidence_reference": evidence.evidence_reference,
                 "source_document_id": evidence.source_document_id,
-                "includes_tier1_to_reporting_company_transport": (
-                    evidence.includes_tier1_to_reporting_company_transport
-                ),
-                "includes_pre_tier1_supply_chain_transport": (
-                    evidence.includes_pre_tier1_supply_chain_transport
-                ),
+                **_transport_trace_fields(evidence),
                 "status": status,
             }
         ),
@@ -952,8 +1265,21 @@ def _calculated_result(
     factor_geography: str,
     factor_year: int,
     kgco2e: Decimal,
+    factor_version: str = "",
+    source_record_id: str = "",
+    source_url: str = "",
+    snapshot_hash: str = "",
+    match_reason: str = "",
+    approved_for_reporting_from: str = "",
+    approved_for_reporting_to: str = "",
+    technology: str = "",
+    official_name: str = "",
+    publisher: str = "",
+    announcement_year: str = "",
+    retrieved_at: str = "",
 ) -> PurchasedSteelCalculationResult:
     tco2e = kgco2e / KG_PER_TONNE
+    official_product = official_name or evidence.steel_product_type
     trace = {
         "activity_type": ACTIVITY_TYPE,
         "calculation_method": method_id,
@@ -966,24 +1292,32 @@ def _calculated_result(
         "formula_version": FORMULA_VERSION,
         "ghg_scope": GHG_SCOPE,
         "scope3_category": SCOPE3_CATEGORY,
-        "includes_tier1_to_reporting_company_transport": (
-            evidence.includes_tier1_to_reporting_company_transport
-        ),
-        "includes_pre_tier1_supply_chain_transport": (
-            evidence.includes_pre_tier1_supply_chain_transport
-        ),
+        **_transport_trace_fields(evidence),
         "purchased_quantity_t": str(quantity_tonnes),
+        "normalized_mass_kg": str(quantity_tonnes * KG_PER_TONNE),
         "factor_unit": factor_unit.label,
         "factor_value": str(factor_value),
         "kgco2e": str(kgco2e),
         "tco2e": str(tco2e),
         "steel_product_type": evidence.steel_product_type,
+        "official_name": official_product,
+        "publisher": publisher,
+        "announcement_year": announcement_year,
+        "retrieved_at": retrieved_at,
         "product_identifier": evidence.product_identifier,
         "purchased_quantity": evidence.purchased_quantity,
         "purchased_unit": evidence.purchased_unit,
         "source_document_id": evidence.source_document_id,
         "supplier_name": evidence.supplier_name,
         "scope_3_category": "category_1",
+        "factor_version": factor_version,
+        "source_record_id": source_record_id,
+        "source_url": source_url,
+        "snapshot_hash": snapshot_hash,
+        "match_reason": match_reason,
+        "approved_for_reporting_from": approved_for_reporting_from,
+        "approved_for_reporting_to": approved_for_reporting_to,
+        "technology": technology,
         "temporal_representativeness_warning": (
             evidence.reporting_year is not None
             and _coerce_year(evidence.reporting_year) is not None
@@ -1002,9 +1336,11 @@ def _calculated_result(
         calculation_reason=(
             "Calculated as purchased mass times a cradle-to-gate "
             f"{method_id} Category 1 factor. Pre-Tier-1 supply-chain "
-            "transport may be included in the cradle-to-gate factor. "
-            "Tier 1 supplier to reporting-company inbound transport is "
-            "not included in Category 1 and belongs in Category 4."
+            "transport may be included in the cradle-to-gate factor; "
+            "coverage comes from the factor source and system boundary, "
+            "not from a user yes/no flag. This Category 1 result does "
+            "not inventory a separate Tier 1 to reporting-company "
+            "transport leg."
         ),
         formula_id=FORMULA_ID,
         formula_version=FORMULA_VERSION,
@@ -1030,6 +1366,22 @@ def _calculated_result(
         purchased_unit=evidence.purchased_unit,
         source_document_id=evidence.source_document_id,
         factor_source_id=factor_source_id,
+        factor_version=factor_version,
+        source_record_id=source_record_id,
+        source_url=source_url,
+        snapshot_hash=snapshot_hash,
+        match_reason=match_reason
+        or (
+            f"{method_id}: purchased mass × cradle-to-gate factor; "
+            "exact product/geography/period match"
+        ),
+        approved_for_reporting_from=approved_for_reporting_from,
+        approved_for_reporting_to=approved_for_reporting_to,
+        technology=technology,
+        official_name=official_product,
+        publisher=publisher,
+        announcement_year=announcement_year,
+        retrieved_at=retrieved_at,
     )
 
 
@@ -1134,16 +1486,17 @@ def calculate_purchased_steel(
             kgco2e=kgco2e,
         )
 
-    matched, _match_status = match_average_data_factor(
+    matched, match_status = match_average_data_factor(
         evidence, factors, reporting_year=reporting_year
     )
     if matched is None:
         return _blocked_result(
             evidence,
-            status=STATUS_NO_FACTOR_CONFIGURED,
+            status=match_status or STATUS_NO_MATCHING_FACTOR,
             reason=(
-                "average_data can only use a registered, versioned secondary "
-                "factor with year, geography, and product type."
+                "average_data can only use a unique registered, versioned "
+                "secondary factor with product type, process, geography, "
+                "cradle-to-gate boundary, and approved reporting period."
             ),
             normalized_value=normalized_value,
             normalized_unit=normalized_unit,
@@ -1167,7 +1520,12 @@ def calculate_purchased_steel(
             normalized_unit=normalized_unit,
         )
     return _calculated_result(
-        evidence,
+        replace(
+            evidence,
+            includes_pre_tier1_supply_chain_transport=(
+                matched.includes_pre_tier1_supply_chain_transport
+            ),
+        ),
         method_id=METHOD_AVERAGE_DATA,
         quantity_tonnes=normalized_tonnes,
         factor_value=matched.factor_value,
@@ -1178,4 +1536,24 @@ def calculate_purchased_steel(
         factor_geography=matched.factor_geography,
         factor_year=matched.factor_year,
         kgco2e=kgco2e,
+        factor_version=matched.factor_version,
+        source_record_id=matched.source_record_id,
+        source_url=matched.source_url,
+        snapshot_hash=matched.snapshot_hash,
+        match_reason=(
+            "average_data exact match on official product identity, "
+            "factor unit, geography, cradle-to-gate boundary, and "
+            "internally approved reporting period"
+        ),
+        approved_for_reporting_from=(
+            matched.approved_for_reporting_from or matched.valid_from
+        ),
+        approved_for_reporting_to=(
+            matched.approved_for_reporting_to or matched.valid_to
+        ),
+        technology=matched.technology,
+        official_name=matched.official_name or matched.steel_product_type,
+        publisher=matched.publisher,
+        announcement_year=matched.announcement_year,
+        retrieved_at=matched.retrieved_at,
     )

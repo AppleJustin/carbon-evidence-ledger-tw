@@ -177,7 +177,7 @@ def test_unresolved_kpi_omitted_when_zero() -> None:
     assert "dash.coverage_all_done" in dash
 
 
-def test_scope_3_unsupported_is_not_zero() -> None:
+def test_scope_3_empty_is_not_zero() -> None:
     csv = (
         "activity_type,activity_value,unit,activity_start_date,activity_end_date\n"
         "外購電力,50000,kWh,2025-01-01,2025-01-31\n"
@@ -185,10 +185,11 @@ def test_scope_3_unsupported_is_not_zero() -> None:
     )
     result = _intake_and_run(csv)
     states = scope_kpi_states(result)
-    assert states["scope_3"]["state"] == "unsupported"
+    assert states["scope_3"]["state"] == "empty"
     assert states["scope_3"]["value"] is None
     dash = (REPO_ROOT / "app_pages/dashboard.py").read_text(encoding="utf-8")
-    assert "dash.hero.scope3_version" in dash
+    assert "dash.scope3.empty" in dash
+    assert "dash.hero.scope3_version" not in dash
 
 
 def test_deterministic_key_insight_from_backend() -> None:
@@ -242,7 +243,8 @@ def test_demo_dashboard_result_first_and_insight() -> None:
         assert emissions_at < next_at
     assert "目前已納入公司盤查排放量" in text
     assert "Scope 1" in text
-    assert "尚未納入計算" in text
+    assert "目前尚無可納入的 Scope 3 計算結果" in text
+    assert "Scope 3 尚未納入計算" not in text
     dash_src = (REPO_ROOT / "app_pages/dashboard.py").read_text(encoding="utf-8")
     notice_at = dash_src.find("dash.emissions_notice")
     coverage_at = dash_src.find("dash.coverage_learn")

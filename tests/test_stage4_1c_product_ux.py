@@ -199,7 +199,7 @@ def test_unresolved_positive_shows_issue_cta() -> None:
         pipeline_result=result,
         is_uploaded_analysis=True,
     )
-    assert t("dash.cta.resolve_remaining", ZH, remaining=1) not in text
+    assert t("dash.cta.resolve_remaining", ZH, remaining=1) in text
     assert t(
         "dash.result_preliminary_body",
         ZH,
@@ -209,7 +209,7 @@ def test_unresolved_positive_shows_issue_cta() -> None:
         unsupported=int(recon.get("unsupported") or 0),
         outside=int(counts["outside_boundary"]),
     ) in text
-    assert t("dash.result_incomplete_sources", ZH) not in text
+    assert t("dash.result_incomplete_sources", ZH) in text
     assert t("dash.result_preliminary", ZH) in text
 
 
@@ -290,7 +290,8 @@ def test_post_analysis_first_viewport_has_result_coverage_insight() -> None:
     assert "目前已納入公司盤查排放量" in text
     assert "Scope 1" in text
     assert "Scope 2" in text
-    assert "尚未納入計算" in text
+    assert "目前尚無可納入的 Scope 3 計算結果" in text
+    assert "Scope 3 尚未納入計算" not in text
     assert "下一步" in text
     insights = executive_emissions_insights(
         at.session_state["pipeline_result"], ZH

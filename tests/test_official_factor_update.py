@@ -600,6 +600,7 @@ def test_steel_average_data_cannot_auto_activate(tmp_path: Path) -> None:
     assert exc.value.code in {
         "CANDIDATE_NEEDS_PARSER_REVIEW",
         "STEEL_FACTOR_NOT_CONFIGURED",
+        "STEEL_FACTOR_NOT_AUTO_ACTIVATED",
         "CANDIDATE_NOT_VALIDATED",
     }
 

@@ -86,6 +86,8 @@ CUSTOMER_MESSAGE_PREFIXES = (
     "dash.hero.scope3_version",
     "dash.scope3_unsupported",
     "dash.scope3_short",
+    "dash.scope3.empty",
+    "dash.scope3.partial",
     "dash.scope_help_body",
 )
 ADMIN_KEY_MARKERS = (".admin_",)
@@ -691,23 +693,30 @@ def test_legacy_migration_stays_inert_until_explicit_confirm(tmp_path: Path) -> 
 
 
 def test_scope3_copy_is_complete_in_zh_and_en_and_not_zero() -> None:
-    zh = t("dash.hero.scope3_version", ZH)
-    en = t("dash.hero.scope3_version", EN)
-    assert "尚未納入計算" in zh
-    assert "僅包含 Scope 1 與 Scope 2" in zh
-    assert "價值鏈排放不包含在目前總量中" in zh
-    assert "not included in this calculation" in en
-    assert "Scope 1 and Scope 2 only" in en
-    assert "value-chain emissions are excluded" in en
+    zh = t("dash.scope3.empty", ZH)
+    en = t("dash.scope3.empty", EN)
+    assert zh == "目前尚無可納入的 Scope 3 計算結果。"
+    assert "No Scope 3 results can be included yet." in en
+    assert "尚未納入計算" not in zh
+    assert "不支援" not in zh
     for text in (zh, en):
         assert "0 tCO" not in text
         assert "0.00" not in text
         _assert_no_customer_internal_codes(text)
+    partial = t(
+        "dash.scope3.partial",
+        ZH,
+        value="24.15",
+        categories="Category 1－採購商品與服務",
+    )
+    assert "目前已計算 24.15 tCO2e" in partial
+    assert "Category 1－採購商品與服務" in partial
+    assert "尚不代表完整 Scope 3 總量" in partial
     caption = labeled_scope_hero_caption(
         {
             "scope_1": {"state": "calculated", "value": 10.0},
             "scope_2": {"state": "calculated", "value": 5.0},
-            "scope_3": {"state": "unsupported", "value": None},
+            "scope_3": {"state": "empty", "value": None},
         },
         ZH,
     )
@@ -738,9 +747,10 @@ def test_demo_dashboard_scope3_is_not_rendered_as_zero() -> None:
             if value:
                 chunks.append(str(value))
     text = "\n".join(chunks)
-    assert t("dash.hero.scope3_version", ZH) in text
+    assert t("dash.scope3.empty", ZH) in text
+    assert "Scope 3 尚未納入計算" not in text
     assert re.search(r"Scope 3[^\n]{0,120}0(?:\.00)?\s*tCO", text) is None
-    _assert_no_customer_internal_codes(t("dash.hero.scope3_version", ZH))
+    _assert_no_customer_internal_codes(t("dash.scope3.empty", ZH))
 
 
 def test_analysis_countup_assets_were_not_rewritten() -> None:

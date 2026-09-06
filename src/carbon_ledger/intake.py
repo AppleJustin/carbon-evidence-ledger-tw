@@ -93,6 +93,7 @@ _DIESEL_VEHICLE_HINTS = (
 )
 READINESS_READY = "ready"
 READINESS_NEEDS_CONFIRM = "needs_confirm"
+READINESS_NO_MATCHING_FACTOR = "no_matching_factor"
 READINESS_UNSUPPORTED = "unsupported"
 HEATING_VALUE_READY_YEAR = 2025
 
@@ -391,6 +392,24 @@ COLUMN_ALIAS_RULES: dict[str, dict[str, tuple[str, ...]]] = {
             "includes tier1 to reporting company transport",
             "含入廠運輸",
             "含供應商到申報公司運輸",
+        ),
+        CONFIDENCE_MEDIUM: (),
+    },
+    "factor_includes_tier1_to_reporting_company_transport": {
+        CONFIDENCE_HIGH: (
+            "factor_includes_tier1_to_reporting_company_transport",
+            "factor includes tier1 to reporting company transport",
+            "係數含入廠運輸",
+            "係數包含供應商到本公司運輸",
+        ),
+        CONFIDENCE_MEDIUM: (),
+    },
+    "tier1_to_reporting_company_transport_control": {
+        CONFIDENCE_HIGH: (
+            "tier1_to_reporting_company_transport_control",
+            "tier1 to reporting company transport control",
+            "入廠運輸控制",
+            "運輸工具控制",
         ),
         CONFIDENCE_MEDIUM: (),
     },
@@ -1099,6 +1118,8 @@ def suggest_column_mapping_with_confidence(
         "evidence_reference",
         "includes_pre_tier1_supply_chain_transport",
         "includes_tier1_to_reporting_company_transport",
+        "factor_includes_tier1_to_reporting_company_transport",
+        "tier1_to_reporting_company_transport_control",
     )
 
     for field_name in field_order:
@@ -1335,6 +1356,8 @@ _STEEL_OPTIONAL_FIELDS = (
     "evidence_reference",
     "includes_pre_tier1_supply_chain_transport",
     "includes_tier1_to_reporting_company_transport",
+    "factor_includes_tier1_to_reporting_company_transport",
+    "tier1_to_reporting_company_transport_control",
 )
 _STEEL_CALCULATION_METHOD_ALIASES = {
     "supplier_specific": "supplier_specific",
@@ -2294,6 +2317,8 @@ def classify_activity_analysis_readiness(
     evidence_reference: str = "",
     source_document_id: str = "",
     includes_tier1_to_reporting_company_transport: Any = None,
+    factor_includes_tier1_to_reporting_company_transport: Any = None,
+    tier1_to_reporting_company_transport_control: Any = None,
     factor_geography: str = "",
 ) -> str:
     """Classify one accepted row for the pre-analysis business summary."""
@@ -2313,6 +2338,12 @@ def classify_activity_analysis_readiness(
             source_document_id=source_document_id,
             includes_tier1_to_reporting_company_transport=(
                 includes_tier1_to_reporting_company_transport
+            ),
+            factor_includes_tier1_to_reporting_company_transport=(
+                factor_includes_tier1_to_reporting_company_transport
+            ),
+            tier1_to_reporting_company_transport_control=(
+                tier1_to_reporting_company_transport_control
             ),
             factor_geography=factor_geography,
         )
@@ -2341,6 +2372,76 @@ def classify_activity_analysis_readiness(
     return READINESS_UNSUPPORTED
 
 
+def classify_activity_ui_readiness(
+    *,
+    activity_type: str,
+    fuel_subtype: str,
+    process_use: str,
+    activity_start: Any,
+    activity_end: Any,
+    calculation_method: str = "",
+    supplier_name: str = "",
+    steel_product_type: str = "",
+    product_identifier: str = "",
+    emission_factor_value: Any = None,
+    emission_factor_unit: str = "",
+    factor_boundary: str = "",
+    factor_year: Any = None,
+    factor_source_id: str = "",
+    evidence_reference: str = "",
+    source_document_id: str = "",
+    includes_tier1_to_reporting_company_transport: Any = None,
+    factor_includes_tier1_to_reporting_company_transport: Any = None,
+    tier1_to_reporting_company_transport_control: Any = None,
+    factor_geography: str = "",
+    calculation_status: str = "",
+) -> str:
+    """UI bucket for one accepted row, including confirmed-but-no-factor steel.
+
+    ``purchased_steel`` is a supported activity. A complete average-data
+    confirmation with zero registry matches is ``no_matching_factor``, not
+    ``unsupported``.
+    """
+    base = classify_activity_analysis_readiness(
+        activity_type=activity_type,
+        fuel_subtype=fuel_subtype,
+        process_use=process_use,
+        activity_start=activity_start,
+        activity_end=activity_end,
+        calculation_method=calculation_method,
+        supplier_name=supplier_name,
+        steel_product_type=steel_product_type,
+        product_identifier=product_identifier,
+        emission_factor_value=emission_factor_value,
+        emission_factor_unit=emission_factor_unit,
+        factor_boundary=factor_boundary,
+        factor_year=factor_year,
+        factor_source_id=factor_source_id,
+        evidence_reference=evidence_reference,
+        source_document_id=source_document_id,
+        includes_tier1_to_reporting_company_transport=(
+            includes_tier1_to_reporting_company_transport
+        ),
+        factor_includes_tier1_to_reporting_company_transport=(
+            factor_includes_tier1_to_reporting_company_transport
+        ),
+        tier1_to_reporting_company_transport_control=(
+            tier1_to_reporting_company_transport_control
+        ),
+        factor_geography=factor_geography,
+    )
+    if activity_type == "purchased_steel":
+        if base == READINESS_NEEDS_CONFIRM:
+            return READINESS_NEEDS_CONFIRM
+        status = str(calculation_status or "").strip()
+        if status == "no_factor_configured":
+            return READINESS_NO_MATCHING_FACTOR
+        if status == "no_matching_factor":
+            return READINESS_NO_MATCHING_FACTOR
+        return base
+    return base
+
+
 def purchased_steel_missing_fields(
     *,
     calculation_method: str = "",
@@ -2355,19 +2456,52 @@ def purchased_steel_missing_fields(
     evidence_reference: str = "",
     source_document_id: str = "",
     includes_tier1_to_reporting_company_transport: Any = None,
+    factor_includes_tier1_to_reporting_company_transport: Any = None,
+    tier1_to_reporting_company_transport_control: Any = None,
     factor_geography: str = "",
 ) -> tuple[str, ...]:
     """Return canonical field names still required for steel Category 1."""
-    inbound = normalize_uploaded_boolean(
-        includes_tier1_to_reporting_company_transport
+    from carbon_ledger.purchased_steel import (
+        CONTROL_NOT_APPLICABLE,
+        CONTROL_REPORTING_COMPANY,
+        CONTROL_THIRD_PARTY,
+        CONTROL_UNKNOWN,
+        parse_factor_includes_tier1_transport,
+        parse_tier1_transport_control,
+        serialize_tri_state_bool,
     )
-    if inbound == "true":
-        return ("includes_tier1_to_reporting_company_transport",)
+
     method = normalize_steel_calculation_method(calculation_method)
-    if not method:
+    if not method or method not in {"supplier_specific", "average_data"}:
         return ("calculation_method",)
-    if method not in {"supplier_specific", "average_data"}:
-        return ("calculation_method",)
+    inclusion = serialize_tri_state_bool(
+        parse_factor_includes_tier1_transport(
+            {
+                "factor_includes_tier1_to_reporting_company_transport": (
+                    factor_includes_tier1_to_reporting_company_transport
+                ),
+                "includes_tier1_to_reporting_company_transport": (
+                    includes_tier1_to_reporting_company_transport
+                ),
+            }
+        )
+    )
+    if not inclusion:
+        return ("factor_includes_tier1_to_reporting_company_transport",)
+    if inclusion == "true":
+        control = parse_tier1_transport_control(
+            tier1_to_reporting_company_transport_control
+        )
+        if control in {CONTROL_UNKNOWN, CONTROL_NOT_APPLICABLE, ""}:
+            return ("tier1_to_reporting_company_transport_control",)
+        if control == CONTROL_THIRD_PARTY:
+            return (
+                "blocked_tier1_inbound_transport_requires_category4_split",
+            )
+        if control == CONTROL_REPORTING_COMPANY:
+            return (
+                "blocked_company_controlled_transport_requires_scope1_or2_split",
+            )
     missing: list[str] = []
     if method == "average_data":
         if not _intake_cell_text(steel_product_type):
@@ -2404,16 +2538,6 @@ def _classify_purchased_steel_readiness(**fields: Any) -> str:
     missing = purchased_steel_missing_fields(**fields)
     if not missing:
         return READINESS_READY
-    inbound = normalize_uploaded_boolean(
-        fields.get("includes_tier1_to_reporting_company_transport")
-    )
-    method = normalize_steel_calculation_method(fields.get("calculation_method"))
-    if inbound == "true":
-        return READINESS_NEEDS_CONFIRM
-    if method == "average_data" and missing:
-        return READINESS_NEEDS_CONFIRM
-    if method == "supplier_specific" or not method:
-        return READINESS_NEEDS_CONFIRM
     return READINESS_NEEDS_CONFIRM
 
 
@@ -2422,6 +2546,7 @@ def summarize_pre_analysis_readiness(accepted: pd.DataFrame) -> dict[str, int]:
     summary = {
         READINESS_READY: 0,
         READINESS_NEEDS_CONFIRM: 0,
+        READINESS_NO_MATCHING_FACTOR: 0,
         READINESS_UNSUPPORTED: 0,
     }
     if accepted is None or getattr(accepted, "empty", True):
@@ -2446,6 +2571,12 @@ def summarize_pre_analysis_readiness(accepted: pd.DataFrame) -> dict[str, int]:
             source_document_id=str(row.get("source_document_id") or ""),
             includes_tier1_to_reporting_company_transport=row.get(
                 "includes_tier1_to_reporting_company_transport"
+            ),
+            factor_includes_tier1_to_reporting_company_transport=row.get(
+                "factor_includes_tier1_to_reporting_company_transport"
+            ),
+            tier1_to_reporting_company_transport_control=row.get(
+                "tier1_to_reporting_company_transport_control"
             ),
             factor_geography=str(row.get("factor_geography") or ""),
         )
@@ -2952,11 +3083,26 @@ def build_and_validate_intake(
                     steel_fields[field_name] = normalize_steel_factor_boundary(
                         raw
                     )
-                elif field_name in {
-                    "includes_pre_tier1_supply_chain_transport",
-                    "includes_tier1_to_reporting_company_transport",
-                }:
+                elif field_name == "includes_pre_tier1_supply_chain_transport":
                     steel_fields[field_name] = normalize_uploaded_boolean(raw)
+                elif field_name in {
+                    "includes_tier1_to_reporting_company_transport",
+                    "factor_includes_tier1_to_reporting_company_transport",
+                }:
+                    from carbon_ledger.purchased_steel import (
+                        parse_tri_state_bool,
+                        serialize_tri_state_bool,
+                    )
+
+                    steel_fields[field_name] = serialize_tri_state_bool(
+                        parse_tri_state_bool(raw)
+                    )
+                elif field_name == "tier1_to_reporting_company_transport_control":
+                    from carbon_ledger.purchased_steel import (
+                        parse_tier1_transport_control,
+                    )
+
+                    steel_fields[field_name] = parse_tier1_transport_control(raw)
                 else:
                     steel_fields[field_name] = _intake_cell_text(raw)
 

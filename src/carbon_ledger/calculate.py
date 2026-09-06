@@ -93,6 +93,7 @@ PASSTHROUGH_STATUSES = {
     "blocked_conflicting_factor_group",
     "blocked_natural_gas_type_required",
     "no_factor_configured",
+    "no_matching_factor",
     "not_emissions_activity",
     "unsupported_activity_type",
 }
@@ -283,7 +284,7 @@ def _passthrough_reason(readiness_row: pd.Series) -> str:
             or "CO2/CH4/N2O factors do not belong to one official source family."
         )
 
-    if status == "no_factor_configured":
+    if status in {"no_factor_configured", "no_matching_factor"}:
         return (
             readiness_reason
             or "No suitable emission factor is configured for calculation."
@@ -1041,9 +1042,23 @@ def _purchased_steel_calc_record(
                     "includes_tier1_to_reporting_company_transport"
                 )
             ),
+            "factor_includes_tier1_to_reporting_company_transport": _text(
+                activity_row.get(
+                    "factor_includes_tier1_to_reporting_company_transport"
+                )
+            ),
+            "tier1_to_reporting_company_transport_control": _text(
+                activity_row.get(
+                    "tier1_to_reporting_company_transport_control"
+                )
+            ),
             "includes_tier2_to_tier1_transport": _text(
                 activity_row.get("includes_tier2_to_tier1_transport")
             ),
+            "technology": _text(
+                activity_row.get("technology") or activity_row.get("process")
+            ),
+            "reporting_period_id": _text(activity_row.get("reporting_period_id")),
         }
     )
     if reporting_year is not None:

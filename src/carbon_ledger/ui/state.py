@@ -114,6 +114,8 @@ STATE_INTAKE_MAPPING_MEMORY = "intake_mapping_memory"
 STATE_INTAKE_MAPPING_PROVENANCE = "intake_mapping_provenance"
 STATE_ACTIVITY_BOUNDARY_DECISIONS = "activity_boundary_decisions"
 STATE_BOUNDARY_CONFIRM_FLASH = "activity_boundary_confirm_flash"
+STATE_PURCHASED_STEEL_CONFIRMATIONS = "purchased_steel_confirmations"
+STATE_STEEL_CONFIRM_FLASH = "purchased_steel_confirm_flash"
 STATE_INTAKE_VALIDATION_REQUESTED = "intake_validation_requested"
 STATE_INTAKE_VALIDATION_RUNNING = "intake_validation_running"
 STATE_INTAKE_VALIDATION_ERROR = "intake_validation_error"
@@ -388,6 +390,10 @@ def initialize_ui_state(session_state: Any, *, force: bool = False) -> None:
         session_state[STATE_INTAKE_SHOW_DUPLICATE_REVIEW] = False
     if STATE_ACTIVITY_BOUNDARY_DECISIONS not in session_state:
         session_state[STATE_ACTIVITY_BOUNDARY_DECISIONS] = []
+    if STATE_PURCHASED_STEEL_CONFIRMATIONS not in session_state:
+        session_state[STATE_PURCHASED_STEEL_CONFIRMATIONS] = []
+    if STATE_STEEL_CONFIRM_FLASH not in session_state:
+        session_state[STATE_STEEL_CONFIRM_FLASH] = None
     if STATE_COMPANY_PROFILE not in session_state:
         session_state[STATE_COMPANY_PROFILE] = {}
     if STATE_APPLICABILITY_ASSESSMENT not in session_state:
@@ -1006,6 +1012,32 @@ def save_activity_boundary_decision_in_session(
     return decision
 
 
+def purchased_steel_confirmations_from_state(session_state: Any) -> list[Any]:
+    """Current-session purchased-steel confirmation overlays."""
+    from carbon_ledger.purchased_steel_confirmations import load_confirmations
+
+    return load_confirmations(
+        _ss_get(session_state, STATE_PURCHASED_STEEL_CONFIRMATIONS, [])
+    )
+
+
+def save_purchased_steel_confirmation_in_session(
+    session_state: Any,
+    confirmation: Any,
+) -> Any:
+    """Replace one steel confirmation for the same upload identity."""
+    from carbon_ledger.purchased_steel_confirmations import latest_confirmations
+
+    current = purchased_steel_confirmations_from_state(session_state)
+    incoming = confirmation.identity()
+    current = [item for item in current if item.identity() != incoming]
+    current.append(confirmation)
+    session_state[STATE_PURCHASED_STEEL_CONFIRMATIONS] = [
+        item.to_dict() for item in latest_confirmations(current)
+    ]
+    return confirmation
+
+
 def withdraw_activity_boundary_decision_in_session(
     session_state: Any,
     *,
@@ -1067,6 +1099,15 @@ def included_activities_for_uploaded_analysis(session_state: Any) -> pd.DataFram
     )
     if included is None or getattr(included, "empty", True):
         raise ValueError("Validated intake has no accepted activities.")
+    from carbon_ledger.purchased_steel_confirmations import (
+        apply_purchased_steel_confirmations,
+    )
+
+    included = apply_purchased_steel_confirmations(
+        included,
+        purchased_steel_confirmations_from_state(session_state),
+        current_file_hash=str(_ss_get(session_state, STATE_INTAKE_FILE_HASH) or ""),
+    )
     return apply_activity_boundary_decisions(
         included,
         activity_boundary_decisions_from_state(session_state),
@@ -1117,6 +1158,8 @@ def clear_intake_state(session_state: Any) -> None:
         STATE_INTAKE_VALIDATION_REQUESTED,
         STATE_INTAKE_VALIDATION_RUNNING,
         STATE_INTAKE_VALIDATION_ERROR,
+        STATE_PURCHASED_STEEL_CONFIRMATIONS,
+        STATE_STEEL_CONFIRM_FLASH,
     ):
         if key in session_state:
             del session_state[key]

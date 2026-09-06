@@ -1,0 +1,9 @@
+taxonomy_id,official_name,ui_group,sort_order,notes
+tax_steel_plate,鋼板,鋼板,10,Exact official CFP product name. Do not merge into generic 鋼材.
+tax_hr_rough_coil,熱軋粗鋼捲,熱軋鋼捲,20,Distinct from 熱軋鋼捲.
+tax_hr_coil,熱軋鋼捲,熱軋鋼捲,30,Exact official CFP product name.
+tax_hr_pickled_oiled_coil,熱軋酸洗塗油鋼捲,熱軋鋼捲,40,Distinct process/product. Do not merge.
+tax_hr_plate,熱軋鋼板片,鋼板,50,Distinct from 鋼板.
+tax_cr_coil,冷軋鋼捲,冷軋鋼捲,60,Exact official CFP product name.
+tax_carbon_cr_coil,碳鋼冷軋鋼捲,冷軋鋼捲,70,Distinct from 冷軋鋼捲.
+tax_stainless,不鏽鋼,不鏽鋼,80,Exact official name kept distinct from carbon steel.

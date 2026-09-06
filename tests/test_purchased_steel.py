@@ -20,6 +20,8 @@ from carbon_ledger.purchased_steel import (
     METHOD_SUPPLIER_SPECIFIC,
     SCOPE3_CATEGORY,
     STATUS_BLOCKED_AMBIGUOUS_FACTOR,
+    STATUS_BLOCKED_COMPANY_CONTROLLED_TRANSPORT_REQUIRES_SCOPE1_OR2_SPLIT,
+    STATUS_BLOCKED_FACTOR_INCLUSION_UNCONFIRMED,
     STATUS_BLOCKED_INCOMPATIBLE_BOUNDARY,
     STATUS_BLOCKED_INCOMPATIBLE_UNIT,
     STATUS_BLOCKED_INVALID_PERIOD,
@@ -34,10 +36,13 @@ from carbon_ledger.purchased_steel import (
     STATUS_BLOCKED_MISSING_SUPPLIER_OR_PRODUCT,
     STATUS_BLOCKED_MISSING_UNIT,
     STATUS_BLOCKED_PRODUCT_MISMATCH,
+    STATUS_BLOCKED_TIER1_INBOUND_REQUIRES_CATEGORY4_SPLIT,
+    STATUS_BLOCKED_TRANSPORT_CONTROL_UNCONFIRMED,
     STATUS_BLOCKED_TRANSPORT_NOT_CATEGORY_1,
     STATUS_BLOCKED_UNSUPPORTED_METHOD,
     STATUS_CALCULATED,
     STATUS_NO_FACTOR_CONFIGURED,
+    STATUS_NO_MATCHING_FACTOR,
     PurchasedSteelEvidence,
     RegisteredSteelFactor,
     calculate_purchased_steel,
@@ -74,6 +79,7 @@ def _supplier_specific(**fields: object) -> dict[str, object]:
         "source_document_id": "doc_steel_001",
         "activity_type": ACTIVITY_TYPE,
         "record_type": "material_input",
+        "factor_includes_tier1_to_reporting_company_transport": False,
     }
     record.update(fields)
     return record
@@ -113,6 +119,7 @@ def _average_data(**fields: object) -> dict[str, object]:
         "reporting_period_id": "period-2025",
         "activity_type": ACTIVITY_TYPE,
         "record_type": "material_input",
+        "factor_includes_tier1_to_reporting_company_transport": False,
     }
     record.update(fields)
     return record
@@ -274,11 +281,11 @@ def test_average_data_uses_registered_factor_not_inline_value() -> None:
     assert "9.99" not in result.calculation_trace
 
 
-def test_average_data_without_registered_factor_is_no_factor_configured() -> None:
+def test_average_data_without_registered_factor_is_no_matching_factor() -> None:
     result = calculate_purchased_steel(
         _average_data(emission_factor_value="1.85", emission_factor_unit="tCO2e/t")
     )
-    assert result.calculation_status == STATUS_NO_FACTOR_CONFIGURED
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
     assert result.calculated_tco2e is None
     assert result.calculated_kgco2e is None
 
@@ -291,7 +298,7 @@ def test_average_data_does_not_use_production_registry_steel_factor() -> None:
         _average_data(),
         registered_factors=registry.emission_factors,
     )
-    assert result.calculation_status == STATUS_NO_FACTOR_CONFIGURED
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
 
 
 def test_average_data_product_mismatch_is_blocked() -> None:
@@ -299,7 +306,7 @@ def test_average_data_product_mismatch_is_blocked() -> None:
         _average_data(steel_product_type="stainless coil"),
         registered_factors=pd.DataFrame([_registered_wire_rod_factor()]),
     )
-    assert result.calculation_status == STATUS_BLOCKED_PRODUCT_MISMATCH
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
     assert result.calculated_tco2e is None
 
 
@@ -308,16 +315,16 @@ def test_average_data_year_mismatch_does_not_substitute_another_year() -> None:
         _average_data(reporting_year=2024, factor_year=2024),
         registered_factors=pd.DataFrame([_registered_wire_rod_factor()]),
     )
-    assert result.calculation_status == STATUS_NO_FACTOR_CONFIGURED
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
     assert result.calculated_tco2e is None
 
 
-def test_average_data_geography_mismatch_is_no_factor_configured() -> None:
+def test_average_data_geography_mismatch_is_no_matching_factor() -> None:
     result = calculate_purchased_steel(
         _average_data(factor_geography="CN"),
         registered_factors=pd.DataFrame([_registered_wire_rod_factor()]),
     )
-    assert result.calculation_status == STATUS_NO_FACTOR_CONFIGURED
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
 
 
 def test_average_data_missing_product_type_is_blocked() -> None:
@@ -348,7 +355,7 @@ def test_average_data_skips_incomplete_registered_rows() -> None:
         _average_data(),
         registered_factors=pd.DataFrame([incomplete]),
     )
-    assert result.calculation_status == STATUS_NO_FACTOR_CONFIGURED
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
 
 
 def test_average_data_ambiguous_registered_factors_are_blocked() -> None:
@@ -435,7 +442,7 @@ def test_average_data_expired_2024_factor_cannot_cover_2025() -> None:
         _average_data(reporting_year=2025, factor_year=2024),
         registered_factors=factors,
     )
-    assert result.calculation_status == STATUS_NO_FACTOR_CONFIGURED
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
     assert result.calculated_tco2e is None
 
 
@@ -454,7 +461,7 @@ def test_average_data_midyear_2025_factor_cannot_represent_full_year() -> None:
         _average_data(reporting_year=2025),
         registered_factors=factors,
     )
-    assert result.calculation_status == STATUS_NO_FACTOR_CONFIGURED
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
     assert result.calculated_tco2e is None
 
 
@@ -473,7 +480,7 @@ def test_average_data_malformed_valid_to_is_not_open_ended() -> None:
         _average_data(reporting_year=2025),
         registered_factors=factors,
     )
-    assert result.calculation_status == STATUS_NO_FACTOR_CONFIGURED
+    assert result.calculation_status == STATUS_NO_MATCHING_FACTOR
     assert result.calculated_tco2e is None
 
 
@@ -569,11 +576,15 @@ def test_pre_tier1_upstream_transport_is_allowed_in_category_1() -> None:
     assert "Pre-Tier-1 supply-chain transport may be included" in (
         result.calculation_reason
     )
-    assert "Category 4" in result.calculation_reason
+    assert "all upstream transport excluded" not in result.calculation_reason.lower()
+    assert "Category 4" not in result.calculation_reason
     assert '"includes_pre_tier1_supply_chain_transport": true' in (
         result.calculation_trace
     )
     assert '"includes_tier1_to_reporting_company_transport": false' in (
+        result.calculation_trace
+    )
+    assert '"factor_includes_tier1_to_reporting_company_transport": false' in (
         result.calculation_trace
     )
 
@@ -585,8 +596,9 @@ def test_pre_tier1_flag_does_not_claim_all_upstream_transport_excluded() -> None
     assert result.calculation_status == STATUS_CALCULATED
     assert "Upstream transport is excluded" not in result.calculation_reason
     assert "may be included in the cradle-to-gate factor" in result.calculation_reason
+    assert "all upstream transport excluded" not in result.calculation_reason.lower()
     assert (
-        "inbound transport is not included in Category 1"
+        "does not inventory a separate Tier 1 to reporting-company"
         in result.calculation_reason
     )
     assert '"includes_pre_tier1_supply_chain_transport": true' in (
@@ -597,13 +609,83 @@ def test_pre_tier1_flag_does_not_claim_all_upstream_transport_excluded() -> None
     )
 
 
-def test_tier1_to_reporting_company_transport_is_not_category_1() -> None:
+def test_unconfirmed_factor_inclusion_does_not_calculate() -> None:
     result = calculate_purchased_steel(
-        _supplier_specific(includes_tier1_to_reporting_company_transport=True)
+        _supplier_specific(
+            factor_includes_tier1_to_reporting_company_transport="",
+            includes_tier1_to_reporting_company_transport="",
+        )
     )
-    assert result.calculation_status == STATUS_BLOCKED_TRANSPORT_NOT_CATEGORY_1
+    assert result.calculation_status == STATUS_BLOCKED_FACTOR_INCLUSION_UNCONFIRMED
+    assert result.calculated_tco2e is None
+
+
+def test_factor_inclusion_blank_legacy_boolean_is_not_false() -> None:
+    evidence = parse_purchased_steel_evidence(
+        {
+            **_supplier_specific(),
+            "factor_includes_tier1_to_reporting_company_transport": "",
+            "includes_tier1_to_reporting_company_transport": "",
+        }
+    )
+    assert evidence.factor_includes_tier1_to_reporting_company_transport is None
+    assert evidence.includes_tier1_to_reporting_company_transport is None
+
+
+def test_legacy_boolean_true_without_control_does_not_infer_category_4() -> None:
+    record = _supplier_specific()
+    del record["factor_includes_tier1_to_reporting_company_transport"]
+    record["includes_tier1_to_reporting_company_transport"] = True
+    result = calculate_purchased_steel(record)
+    assert result.calculation_status == STATUS_BLOCKED_TRANSPORT_CONTROL_UNCONFIRMED
     assert result.calculated_tco2e is None
     assert result.scope3_category == SCOPE3_CATEGORY
+
+
+def test_third_party_inbound_in_factor_requires_category4_split() -> None:
+    result = calculate_purchased_steel(
+        _supplier_specific(
+            factor_includes_tier1_to_reporting_company_transport=True,
+            tier1_to_reporting_company_transport_control="third_party",
+        )
+    )
+    assert (
+        result.calculation_status
+        == STATUS_BLOCKED_TIER1_INBOUND_REQUIRES_CATEGORY4_SPLIT
+    )
+    assert result.calculated_tco2e is None
+    assert result.calculated_kgco2e is None
+    assert "Category 4" in result.calculation_reason
+
+
+def test_company_controlled_inbound_in_factor_requires_scope1_or2_split() -> None:
+    result = calculate_purchased_steel(
+        _supplier_specific(
+            factor_includes_tier1_to_reporting_company_transport=True,
+            tier1_to_reporting_company_transport_control="reporting_company",
+        )
+    )
+    assert (
+        result.calculation_status
+        == STATUS_BLOCKED_COMPANY_CONTROLLED_TRANSPORT_REQUIRES_SCOPE1_OR2_SPLIT
+    )
+    assert result.calculated_tco2e is None
+    assert "Category 4" not in result.calculation_reason
+    assert "Scope 1" in result.calculation_reason
+
+
+def test_factor_excludes_inbound_transport_calculates_category_1() -> None:
+    result = calculate_purchased_steel(
+        _supplier_specific(
+            factor_includes_tier1_to_reporting_company_transport=False,
+            tier1_to_reporting_company_transport_control="third_party",
+        )
+    )
+    assert result.calculation_status == STATUS_CALCULATED
+    assert result.calculated_tco2e == 18.5
+    assert '"tier1_to_reporting_company_transport_control": "not_applicable"' in (
+        result.calculation_trace
+    )
 
 
 def test_third_party_transport_record_is_not_category_1() -> None:
@@ -637,7 +719,10 @@ def test_blocked_statuses_never_write_zero_emissions() -> None:
         _supplier_specific(emission_factor_value=None),
         _supplier_specific(calculation_method="hybrid"),
         _average_data(),
-        _supplier_specific(includes_tier1_to_reporting_company_transport=True),
+        _supplier_specific(
+            factor_includes_tier1_to_reporting_company_transport=True,
+            tier1_to_reporting_company_transport_control="third_party",
+        ),
     ]
     for record in blocked_records:
         result = calculate_purchased_steel(record)
@@ -646,7 +731,32 @@ def test_blocked_statuses_never_write_zero_emissions() -> None:
         assert result.calculated_tco2e is None
 
 
-def test_module_does_not_hardcode_a_generic_steel_factor() -> None:
+def test_average_data_pre_tier1_comes_from_registry_not_activity_row() -> None:
+    factors = pd.DataFrame(
+        [
+            _registered_wire_rod_factor(
+                includes_pre_tier1_supply_chain_transport=True
+            )
+        ]
+    )
+    result = calculate_purchased_steel(
+        _average_data(includes_pre_tier1_supply_chain_transport=False),
+        registered_factors=factors,
+    )
+    assert result.calculation_status == STATUS_CALCULATED
+    assert result.calculated_tco2e == 18.5
+    assert '"includes_pre_tier1_supply_chain_transport": true' in (
+        result.calculation_trace
+    )
+
+
+def test_missing_pre_tier1_flag_does_not_claim_upstream_transport_excluded() -> None:
+    result = calculate_purchased_steel(_supplier_specific())
+    assert result.calculation_status == STATUS_CALCULATED
+    assert "all upstream transport excluded" not in result.calculation_reason.lower()
+    assert '"includes_pre_tier1_supply_chain_transport": null' in (
+        result.calculation_trace
+    )
     assert "1.85" not in PURCHASED_STEEL_SOURCE
     assert "DEFAULT_STEEL_FACTOR" not in PURCHASED_STEEL_SOURCE
     assert "GENERIC_STEEL_EF" not in PURCHASED_STEEL_SOURCE
@@ -699,6 +809,8 @@ def test_typed_evidence_instance_can_be_calculated_directly() -> None:
         factor_source_id="ref_supplier_epd_wire_rod_2025",
         factor_year=2025,
         reporting_year=2025,
+        factor_includes_tier1_to_reporting_company_transport=False,
+        includes_tier1_to_reporting_company_transport=False,
     )
     result = calculate_purchased_steel(evidence)
     assert result.calculation_status == STATUS_CALCULATED
@@ -708,6 +820,7 @@ def test_typed_evidence_instance_can_be_calculated_directly() -> None:
 def test_all_documented_blocked_statuses_are_named() -> None:
     expected = {
         STATUS_NO_FACTOR_CONFIGURED,
+        STATUS_NO_MATCHING_FACTOR,
         STATUS_BLOCKED_MISSING_RECORD_ID,
         STATUS_BLOCKED_MISSING_METHOD,
         STATUS_BLOCKED_UNSUPPORTED_METHOD,
@@ -725,5 +838,9 @@ def test_all_documented_blocked_statuses_are_named() -> None:
         STATUS_BLOCKED_MISSING_FACTOR_YEAR,
         STATUS_BLOCKED_AMBIGUOUS_FACTOR,
         STATUS_BLOCKED_TRANSPORT_NOT_CATEGORY_1,
+        STATUS_BLOCKED_FACTOR_INCLUSION_UNCONFIRMED,
+        STATUS_BLOCKED_TRANSPORT_CONTROL_UNCONFIRMED,
+        STATUS_BLOCKED_TIER1_INBOUND_REQUIRES_CATEGORY4_SPLIT,
+        STATUS_BLOCKED_COMPANY_CONTROLLED_TRANSPORT_REQUIRES_SCOPE1_OR2_SPLIT,
     }
     assert expected <= BLOCKED_STATUSES

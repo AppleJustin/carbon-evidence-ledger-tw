@@ -335,6 +335,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "缺少排放係數",
         "en": "Emission factor needed",
     },
+    "status.no_matching_factor": {
+        "zh-TW": "無符合係數",
+        "en": "No matching factor",
+    },
     "status.blocked_missing_supplier_or_product": {
         "zh-TW": "尚缺供應商名稱",
         "en": "Supplier name required",
@@ -360,8 +364,24 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Factor boundary must be cradle-to-gate",
     },
     "status.blocked_transport_not_category_1": {
-        "zh-TW": "入廠運輸不屬於 Category 1",
-        "en": "Inbound transport is not Category 1",
+        "zh-TW": "獨立運輸紀錄不屬於 Category 1",
+        "en": "A standalone transport record is not Category 1",
+    },
+    "status.blocked_factor_inclusion_unconfirmed": {
+        "zh-TW": "尚未確認係數是否包含入廠運輸",
+        "en": "Factor inbound-transport inclusion is not confirmed",
+    },
+    "status.blocked_transport_control_unconfirmed": {
+        "zh-TW": "尚未確認入廠運輸控制方式",
+        "en": "Inbound-transport control is not confirmed",
+    },
+    "status.blocked_tier1_inbound_transport_requires_category4_split": {
+        "zh-TW": "需先拆分 Scope 3 Category 4 運輸",
+        "en": "Category 4 transport split required",
+    },
+    "status.blocked_company_controlled_transport_requires_scope1_or2_split": {
+        "zh-TW": "需先拆分 Scope 1 或 Scope 2 運輸",
+        "en": "Scope 1 or 2 transport split required",
     },
     "status.blocked_ambiguous_factor": {
         "zh-TW": "符合的平均係數超過一筆",
@@ -703,6 +723,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "dash.cta.how_to_fix": {"zh-TW": "查看如何處理", "en": "See how to fix"},
     "dash.cta.view_frameworks": {"zh-TW": "查看準則分析", "en": "Open frameworks"},
     "dash.cta.update_data": {"zh-TW": "更新資料", "en": "Update data"},
+    "dash.cta.edit_emissions_data": {
+        "zh-TW": "返回排放資料與計算修改",
+        "en": "Return to edit emissions data and calculations",
+    },
     "dash.frameworks_card": {
         "zh-TW": "準則分析 · {count} 個分析模組可查看",
         "en": "Framework analysis · {count} modules available",
@@ -1536,6 +1560,10 @@ MESSAGES: dict[str, dict[str, str]] = {
             "The system will not silently use a different year's factor."
         ),
     },
+    "explain.no_matching_factor": {
+        "zh-TW": "目前無符合係數。",
+        "en": "No matching factor.",
+    },
     "explain.no_factor_configured_year": {
         "zh-TW": (
             "尚未找到適用於這筆活動期間的官方排放係數。\n"
@@ -1566,6 +1594,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "選定並文件化適用的排放係數後再計算。",
         "en": "Select and document an appropriate emission factor before calculation.",
     },
+    "next.no_matching_factor": {
+        "zh-TW": "補齊產品類型與已核准係數後再計算。",
+        "en": "Confirm the product type and an approved factor before calculation.",
+    },
     "next.calculated": {
         "zh-TW": "此筆計算無需額外動作。",
         "en": "No calculation action required for this record.",
@@ -1577,18 +1609,29 @@ MESSAGES: dict[str, dict[str, str]] = {
     "explain.steel.calculated": {
         "zh-TW": (
             "已依採購質量乘上搖籃到大門係數完成估算。"
-            "pre-Tier-1 供應鏈運輸可包含在 Category 1；"
-            "供應商到申報公司的入廠運輸應列 Category 4。"
+            "供應商以前的供應鏈運輸涵蓋情形由係數來源與系統邊界判定；"
+            "本列 Category 1 不含需另行分類的供應商到本公司運輸盤查。"
         ),
         "en": (
             "Estimated as purchased mass times a cradle-to-gate factor. "
-            "Pre-Tier-1 supply-chain transport may be included in Category 1; "
-            "Tier 1 to reporting-company inbound transport belongs in Category 4."
+            "Pre-Tier-1 supply-chain transport coverage is taken from the "
+            "factor source and system boundary. This Category 1 result does "
+            "not inventory a separate Tier 1 to reporting-company transport leg."
         ),
     },
     "explain.steel.no_factor_configured": {
-        "zh-TW": "目前尚未設定適用的平均鋼材排放係數",
-        "en": "No applicable average steel emission factor is configured yet",
+        "zh-TW": "目前尚未設定符合條件的平均數據係數，因此本列暫不計算。",
+        "en": (
+            "No matching average-data factor is configured yet, "
+            "so this row is not calculated."
+        ),
+    },
+    "explain.steel.no_matching_factor": {
+        "zh-TW": "沒有唯一且已核准的平均數據係數可精確匹配，因此本列暫不計算。",
+        "en": (
+            "No unique approved average-data factor matches this row, "
+            "so emissions are not calculated."
+        ),
     },
     "explain.steel.blocked_missing_supplier_or_product": {
         "zh-TW": "供應商特定法需要供應商名稱；僅有產品類型不足以計算。",
@@ -1617,13 +1660,59 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "explain.steel.blocked_transport_not_category_1": {
         "zh-TW": (
-            "供應商到申報公司的第三方入廠運輸不屬於 Category 1，應列 Category 4。"
-            "cradle-to-gate 可包含 pre-Tier-1 供應鏈運輸。"
+            "獨立的第三方運輸紀錄不屬於 Category 1 採購鋼材。"
         ),
         "en": (
-            "Tier 1 to reporting-company inbound transport is not Category 1 "
-            "and belongs in Category 4. Cradle-to-gate may include pre-Tier-1 "
-            "supply-chain transport."
+            "A standalone third-party transport record is not Scope 3 "
+            "Category 1 purchased steel."
+        ),
+    },
+    "explain.steel.blocked_factor_inclusion_unconfirmed": {
+        "zh-TW": (
+            "尚未確認此筆鋼材使用的排放係數是否包含 Tier 1 供應商到本公司的運輸。"
+            "空白不會被當成「不包含」，因此本列暫不計算。"
+        ),
+        "en": (
+            "Confirm whether the steel emission factor includes Tier 1 "
+            "supplier to this-company transport. Blank is not treated as "
+            "excluded, so this row is not calculated."
+        ),
+    },
+    "explain.steel.blocked_transport_control_unconfirmed": {
+        "zh-TW": (
+            "此係數包含 Tier 1 供應商到本公司運輸，但尚未確認運輸工具由誰擁有或控制。"
+            "在確認前本列不計算，也不會推測為 Category 4。"
+        ),
+        "en": (
+            "The factor includes Tier 1 supplier to this-company transport, "
+            "but vehicle ownership/control is not confirmed. The row is not "
+            "calculated and Category 4 is not inferred."
+        ),
+    },
+    "explain.steel.blocked_tier1_inbound_transport_requires_category4_split": {
+        "zh-TW": (
+            "此係數包含由第三方承運的 Tier 1 供應商到本公司運輸。"
+            "該段應另列 Scope 3 Category 4；在取得不含該段運輸的鋼材係數"
+            "或完成拆分前，本列不計入 Category 1。"
+        ),
+        "en": (
+            "This factor includes third-party carriage from the Tier 1 "
+            "supplier to this company. That leg belongs in Scope 3 "
+            "Category 4. Until a steel factor without that leg, or a split, "
+            "is available, this row is not counted in Category 1."
+        ),
+    },
+    "explain.steel.blocked_company_controlled_transport_requires_scope1_or2_split": {
+        "zh-TW": (
+            "此係數包含由本公司擁有或控制之運輸排放。"
+            "該段應依能源來源分別列入 Scope 1 或 Scope 2；"
+            "在取得不含該段運輸的鋼材係數或完成拆分前，本列不計入 Category 1。"
+        ),
+        "en": (
+            "This factor includes transport owned or controlled by this "
+            "company. That leg belongs in Scope 1 or Scope 2 by energy "
+            "source. Until a steel factor without that leg, or a split, is "
+            "available, this row is not counted in Category 1."
         ),
     },
     "explain.steel.blocked_ambiguous_factor": {
@@ -2359,12 +2448,25 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Evidence reference",
     },
     "intake.field.includes_pre_tier1_transport": {
-        "zh-TW": "含供應鏈上游（pre-Tier-1）運輸",
-        "en": "Includes pre-Tier-1 supply-chain transport",
+        "zh-TW": "供應鏈上游（pre-Tier-1）運輸涵蓋（來源文件／係數邊界）",
+        "en": "Pre-Tier-1 supply-chain transport coverage (source/boundary)",
     },
     "intake.field.includes_inbound_transport": {
-        "zh-TW": "含供應商到申報公司入廠運輸",
-        "en": "Includes Tier 1 to reporting-company transport",
+        "zh-TW": "含供應商到申報公司入廠運輸（舊欄位）",
+        "en": "Includes Tier 1 to reporting-company transport (legacy field)",
+    },
+    "intake.field.factor_includes_inbound_transport": {
+        "zh-TW": (
+            "此筆鋼材使用的排放係數，是否包含 Tier 1 供應商到本公司的運輸排放？"
+        ),
+        "en": (
+            "Does the emission factor used for this steel purchase include "
+            "transport emissions from the Tier 1 supplier to this company?"
+        ),
+    },
+    "intake.field.transport_control": {
+        "zh-TW": "該段運輸工具由誰擁有或控制？",
+        "en": "Who owns or controls the vehicle used for that transport?",
     },
     "intake.issue.steel_missing": {
         "zh-TW": "尚缺：{fields}",
@@ -2379,18 +2481,349 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "intake.issue.steel_inbound": {
         "zh-TW": (
-            "供應商到申報公司的第三方入廠運輸不屬於 Scope 3 Category 1，"
-            "應列 Category 4。cradle-to-gate 可含 pre-Tier-1 供應鏈運輸。"
+            "此係數包含由第三方承運的 Tier 1 供應商到本公司運輸。"
+            "該段應另列 Scope 3 Category 4；在取得不含該段運輸的鋼材係數"
+            "或完成拆分前，本列不計入 Category 1。"
         ),
         "en": (
-            "Tier 1 to reporting-company inbound transport is not Scope 3 "
-            "Category 1 and belongs in Category 4. Cradle-to-gate may include "
-            "pre-Tier-1 supply-chain transport."
+            "This factor includes third-party carriage from the Tier 1 "
+            "supplier to this company. That leg belongs in Scope 3 "
+            "Category 4. Until a steel factor without that leg, or a split, "
+            "is available, this row is not counted in Category 1."
+        ),
+    },
+    "intake.issue.steel_factor_inclusion": {
+        "zh-TW": (
+            "請確認排放係數是否包含 Tier 1 供應商到本公司的運輸。"
+            "此題問的是係數邊界，不是貨物有沒有送到公司。"
+        ),
+        "en": (
+            "Confirm whether the emission factor includes Tier 1 supplier "
+            "to this-company transport. This asks about the factor boundary, "
+            "not whether the goods were delivered."
+        ),
+    },
+    "intake.issue.steel_transport_control": {
+        "zh-TW": (
+            "係數已包含該段運輸時，必須確認運輸工具由本公司或第三方擁有或控制。"
+            "在確認前不會計算，也不會推測為 Category 4。"
+        ),
+        "en": (
+            "When the factor includes that transport leg, confirm whether "
+            "this company or a third party owns or controls the vehicle. "
+            "Until then the row is not calculated and Category 4 is not inferred."
         ),
     },
     "intake.issue.steel_average_no_factor": {
-        "zh-TW": "目前尚未設定適用的平均鋼材排放係數",
-        "en": "No applicable average steel emission factor is configured yet",
+        "zh-TW": (
+            "目前無符合係數。登錄檔沒有可精確匹配的已核准平均數據係數，"
+            "因此本列暫不計算。"
+        ),
+        "en": (
+            "No matching factor. The registry has no unique approved "
+            "average-data coefficient for this row, so it is not calculated."
+        ),
+    },
+    "intake.issue.steel_candidate_pending_review": {
+        "zh-TW": (
+            "已偵測到官方候選係數，但尚未完成適用邊界與版本審查，"
+            "因此本列暫不計算。"
+        ),
+        "en": (
+            "Official candidate factors were detected, but applicability "
+            "boundary and version review is not complete, so this row "
+            "is not calculated yet."
+        ),
+    },
+    "intake.field.source_document_id": {
+        "zh-TW": "來源文件編號",
+        "en": "Source document id",
+    },
+    "intake.legend.format_ok": {
+        "zh-TW": "格式檢查通過只代表欄位與資料格式可讀，不代表可以開始計算。",
+        "en": (
+            "Passing the format check only means the columns and values are "
+            "readable. It does not mean the row can be calculated yet."
+        ),
+    },
+    "intake.legend.needs_confirm": {
+        "zh-TW": "需要確認代表計算所需的業務資料尚未完整，請用下方表單補齊。",
+        "en": (
+            "Needs confirmation means the business data required for "
+            "calculation is still incomplete. Use the form below."
+        ),
+    },
+    "intake.legend.no_factor": {
+        "zh-TW": (
+            "目前無符合係數代表資料已確認，但登錄檔沒有可用係數，本列暫不計算。"
+        ),
+        "en": (
+            "No matching factor means the row is confirmed, but the registry "
+            "has no usable factor, so this row is not calculated."
+        ),
+    },
+    "intake.steel.form.title": {
+        "zh-TW": "採購鋼材確認",
+        "en": "Purchased steel confirmation",
+    },
+    "intake.steel.form.help": {
+        "zh-TW": (
+            "請選擇計算方法並補齊資料。系統不會依「採購鋼材」名稱自動選擇方法，"
+            "也不會讓使用者直接選擇 Scope。Scope 3 Category 1 仍由既有規則判定。"
+        ),
+        "en": (
+            "Choose a calculation method and complete the required fields. "
+            "The activity name does not select a method, and you cannot "
+            "choose Scope here. Scope 3 Category 1 is still decided by "
+            "existing rules."
+        ),
+    },
+    "intake.steel.form.record": {
+        "zh-TW": "資料列編號",
+        "en": "Record id",
+    },
+    "intake.steel.form.quantity": {
+        "zh-TW": "採購量：{quantity} {unit}",
+        "en": "Purchased quantity: {quantity} {unit}",
+    },
+    "intake.steel.form.year": {
+        "zh-TW": "盤查年度 {year}／期間 {period}",
+        "en": "Reporting year {year} / period {period}",
+    },
+    "intake.steel.form.no_scope": {
+        "zh-TW": "此表單不能選擇 Scope；Category 1 由系統規則判定。",
+        "en": "This form does not let you choose Scope; Category 1 is rule-based.",
+    },
+    "intake.steel.form.transport_help": {
+        "zh-TW": (
+            "這裡確認的是『排放係數包含哪些排放』，不是確認鋼材是否有送到公司。"
+            "供應商以前的上游運輸可包含在 Category 1；"
+            "供應商到本公司的運輸需依實際控制方式另外分類。"
+        ),
+        "en": (
+            "This confirms which emissions are inside the emission factor, "
+            "not whether the steel was delivered to the company. Upstream "
+            "transport before the supplier may already sit in Category 1. "
+            "Transport from the supplier to this company is classified by "
+            "who owns or controls the vehicle."
+        ),
+    },
+    "intake.steel.form.pre_tier1_help": {
+        "zh-TW": (
+            "Category 1 使用 cradle-to-gate 係數；其中供應商以前的供應鏈運輸"
+            "涵蓋情形由係數來源與系統邊界判定。"
+        ),
+        "en": (
+            "Category 1 uses a cradle-to-gate factor. Whether transport "
+            "before the supplier is covered is determined by the factor "
+            "source and system boundary."
+        ),
+    },
+    "intake.steel.method.undecided": {
+        "zh-TW": "尚不確定",
+        "en": "Not sure yet",
+    },
+    "intake.steel.method.undecided_help": {
+        "zh-TW": "尚未選擇計算方法前，本列不能繼續計算。",
+        "en": "This row cannot be calculated until a method is chosen.",
+    },
+    "intake.steel.method.supplier_specific": {
+        "zh-TW": "供應商特定資料",
+        "en": "Supplier-specific data",
+    },
+    "intake.steel.method.average_data": {
+        "zh-TW": "平均數據",
+        "en": "Average data",
+    },
+    "intake.steel.answer.unconfirmed": {
+        "zh-TW": "尚未確認",
+        "en": "Not yet confirmed",
+    },
+    "intake.steel.answer.yes": {"zh-TW": "是", "en": "Yes"},
+    "intake.steel.answer.no": {"zh-TW": "否", "en": "No"},
+    "intake.steel.answer.included": {"zh-TW": "包含", "en": "Included"},
+    "intake.steel.answer.excluded": {"zh-TW": "不包含", "en": "Not included"},
+    "intake.steel.control.reporting_company": {
+        "zh-TW": "本公司擁有或控制",
+        "en": "Owned or controlled by this company",
+    },
+    "intake.steel.control.third_party": {
+        "zh-TW": "第三方擁有或控制",
+        "en": "Owned or controlled by a third party",
+    },
+    "intake.steel.boundary.cradle_to_gate": {
+        "zh-TW": "確認為搖籃到大門（cradle_to_gate）",
+        "en": "Confirm cradle-to-gate",
+    },
+    "intake.steel.average.help": {
+        "zh-TW": (
+            "平均數據只能使用登錄檔中產品、地理範圍、cradle-to-gate 邊界"
+            "及有效期間完全符合的係數，不會使用上傳列中的任意係數，"
+            "也不會自動挑選最新版本。"
+        ),
+        "en": (
+            "Average data uses only a registry factor that matches product, "
+            "geography, cradle-to-gate boundary, and validity period. "
+            "Uploaded factor values are not used, and the newest version "
+            "is not selected automatically."
+        ),
+    },
+    "intake.steel.field.reporting_year": {
+        "zh-TW": "盤查年度",
+        "en": "Reporting year",
+    },
+    "intake.steel.field.factor_year": {
+        "zh-TW": "係數年份",
+        "en": "Factor year",
+    },
+    "intake.steel.field.technology": {
+        "zh-TW": "製程／技術",
+        "en": "Process / technology",
+    },
+    "intake.steel.catalog.factors": {
+        "zh-TW": "目前可匹配的已核准平均數據係數",
+        "en": "Approved average-data factors that can match",
+    },
+    "intake.steel.catalog.product": {
+        "zh-TW": "產品名稱",
+        "en": "Product name",
+    },
+    "intake.steel.catalog.value": {
+        "zh-TW": "係數值與單位",
+        "en": "Factor value and unit",
+    },
+    "intake.steel.catalog.declared_unit": {
+        "zh-TW": "提供／登錄單位",
+        "en": "Declared / registry unit",
+    },
+    "intake.steel.catalog.version": {
+        "zh-TW": "版本",
+        "en": "Version",
+    },
+    "intake.steel.catalog.boundary": {
+        "zh-TW": "邊界",
+        "en": "Boundary",
+    },
+    "intake.steel.catalog.geography": {
+        "zh-TW": "地理範圍",
+        "en": "Geography",
+    },
+    "intake.steel.catalog.source": {
+        "zh-TW": "來源連結",
+        "en": "Source URL",
+    },
+    "intake.steel.catalog.period": {
+        "zh-TW": "適用期間（內部核准）",
+        "en": "Applicability period (internally approved)",
+    },
+    "intake.steel.catalog.secondary": {
+        "zh-TW": "是否為二次／代理數據",
+        "en": "Secondary / proxy data",
+    },
+    "intake.steel.save": {
+        "zh-TW": "儲存並重新分析",
+        "en": "Save and re-analyse",
+    },
+    "intake.steel.edit": {
+        "zh-TW": "修改鋼材計算資料",
+        "en": "Edit steel calculation data",
+    },
+    "intake.steel.edit.help": {
+        "zh-TW": (
+            "同一筆資料仍可改選供應商特定資料或其他平均數據條件。"
+            "不會新增列，也不會套用到其他檔案、年度或期間。"
+        ),
+        "en": (
+            "You can still switch this same row to supplier-specific data "
+            "or different average-data fields. This does not create a new "
+            "record or reuse the confirmation on another file, year, or period."
+        ),
+    },
+    "intake.steel.error.incomplete": {
+        "zh-TW": "必要資料尚未完整，本列維持需要確認，不會開始計算。",
+        "en": (
+            "Required data is still incomplete. This row stays in needs "
+            "confirmation and is not calculated."
+        ),
+    },
+    "intake.steel.error.method": {
+        "zh-TW": "請先選擇計算方法。尚未選擇前不能繼續計算。",
+        "en": "Choose a calculation method before this row can be calculated.",
+    },
+    "intake.steel.error.identity": {
+        "zh-TW": "缺少目前檔案、資料列或盤查期間資訊，無法儲存確認。",
+        "en": (
+            "The current file, record, or reporting period is missing, "
+            "so this confirmation cannot be saved."
+        ),
+    },
+    "intake.steel.error.file": {
+        "zh-TW": "確認資料必須綁定目前上傳檔案，不能套用到其他檔案。",
+        "en": (
+            "Confirmation data must be bound to the current upload "
+            "and cannot be applied to another file."
+        ),
+    },
+    "intake.steel.error.inbound": {
+        "zh-TW": (
+            "請確認排放係數是否包含 Tier 1 供應商到本公司的運輸。"
+            "尚未確認前不能開始計算。"
+        ),
+        "en": (
+            "Confirm whether the emission factor includes Tier 1 supplier "
+            "to this-company transport before this row can be calculated."
+        ),
+    },
+    "intake.steel.error.control": {
+        "zh-TW": (
+            "係數已包含該段運輸時，請確認運輸工具由本公司或第三方擁有或控制。"
+        ),
+        "en": (
+            "When the factor includes that transport, confirm whether this "
+            "company or a third party owns or controls the vehicle."
+        ),
+    },
+    "intake.steel.error.supplier": {
+        "zh-TW": "供應商特定法需要供應商名稱。",
+        "en": "The supplier-specific method requires a supplier name.",
+    },
+    "intake.steel.error.product": {
+        "zh-TW": "需要鋼材產品類型或產品識別。",
+        "en": "A steel product type or product identifier is required.",
+    },
+    "intake.steel.error.factor_value": {
+        "zh-TW": "需要供應商排放係數。缺值不會當成 0。",
+        "en": "A supplier emission factor is required. Missing values are not 0.",
+    },
+    "intake.steel.error.factor_unit": {
+        "zh-TW": "需要明確的係數單位，例如 tCO2e/t。",
+        "en": "An explicit factor unit such as tCO2e/t is required.",
+    },
+    "intake.steel.error.boundary": {
+        "zh-TW": "請確認係數邊界為搖籃到大門（cradle_to_gate）。",
+        "en": "Confirm that the factor boundary is cradle-to-gate.",
+    },
+    "intake.steel.error.factor_year": {
+        "zh-TW": "供應商特定法需要係數年份，系統不會用盤查年度補上。",
+        "en": (
+            "The supplier-specific method requires factor year. "
+            "Reporting year is not substituted."
+        ),
+    },
+    "intake.steel.error.evidence": {
+        "zh-TW": "請提供係數來源、證據參照或來源文件編號至少一項。",
+        "en": (
+            "Provide at least one of factor source, evidence reference, "
+            "or source document id."
+        ),
+    },
+    "intake.steel.error.geography": {
+        "zh-TW": "平均數據法需要係數地理範圍。",
+        "en": "Average data requires factor geography.",
+    },
+    "intake.steel.error.reporting_year": {
+        "zh-TW": "平均數據法需要可確認的盤查年度。",
+        "en": "Average data requires a confirmed reporting year.",
     },
     "intake.field.year_month": {
         "zh-TW": "年月（月報期間）",
@@ -2748,6 +3181,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "目前不支援",
         "en": "Currently unsupported",
     },
+    "intake.review.no_factor": {
+        "zh-TW": "目前無符合係數",
+        "en": "No matching factor",
+    },
     "intake.value_map_unit": {"zh-TW": "單位對應", "en": "Unit mapping"},
     "intake.choose": {"zh-TW": "請選擇", "en": "Please choose"},
     "intake.source_name": {"zh-TW": "資料來源名稱", "en": "Source name"},
@@ -2803,6 +3240,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "目前不支援",
         "en": "Currently unsupported",
     },
+    "intake.result_no_factor": {
+        "zh-TW": "目前無符合係數",
+        "en": "No matching factor",
+    },
     "intake.result_invalid": {
         "zh-TW": "格式錯誤",
         "en": "Invalid data",
@@ -2836,6 +3277,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "intake.empty.unsupported": {
         "zh-TW": "目前沒有產品尚未支援的活動類型。",
         "en": "No rows use currently unsupported activity types.",
+    },
+    "intake.empty.no_factor": {
+        "zh-TW": "目前沒有已確認但缺少符合係數的資料。",
+        "en": "No confirmed rows are waiting on a matching factor.",
     },
     "intake.empty.invalid": {
         "zh-TW": "目前沒有格式錯誤的資料。",
@@ -3715,6 +4160,10 @@ MESSAGES: dict[str, dict[str, str]] = {
             "needs confirmation, and is not the complete inventory total."
         ),
     },
+    "dash.result_no_factor": {
+        "zh-TW": "已支援但目前無符合係數：{n} 筆。",
+        "en": "Supported but no matching factor: {n} rows.",
+    },
     "boundary.confirm.title": {
         "zh-TW": "待確認冷媒的組織邊界",
         "en": "Refrigerant organizational boundary confirmation",
@@ -3884,6 +4333,24 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "主要排放範疇",
         "en": "Main emission scopes",
     },
+    "dash.scope3.empty": {
+        "zh-TW": "目前尚無可納入的 Scope 3 計算結果。",
+        "en": "No Scope 3 results can be included yet.",
+    },
+    "dash.scope3.partial": {
+        "zh-TW": (
+            "目前已計算 {value} tCO2e，現階段僅涵蓋 {categories}，"
+            "尚不代表完整 Scope 3 總量。"
+        ),
+        "en": (
+            "Currently calculated {value} tCO2e, covering {categories} "
+            "only at this stage; this is not a complete Scope 3 total."
+        ),
+    },
+    "dash.scope3.category.category_1": {
+        "zh-TW": "Category 1－採購商品與服務",
+        "en": "Category 1 — purchased goods and services",
+    },
     "dash.scope3_cat1.title": {
         "zh-TW": "Scope 3 Category 1－採購商品與服務",
         "en": "Scope 3 Category 1 — purchased goods and services",
@@ -3929,9 +4396,41 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": "係數年份",
         "en": "Factor year",
     },
+    "dash.scope3_cat1.factor_id": {
+        "zh-TW": "係數編號",
+        "en": "Factor id",
+    },
+    "dash.scope3_cat1.factor_version": {
+        "zh-TW": "係數版本",
+        "en": "Factor version",
+    },
     "dash.scope3_cat1.factor_source": {
         "zh-TW": "係數來源",
         "en": "Factor source",
+    },
+    "dash.scope3_cat1.official_name": {
+        "zh-TW": "官方產品名稱",
+        "en": "Official product name",
+    },
+    "dash.scope3_cat1.factor_value": {
+        "zh-TW": "係數值",
+        "en": "Factor value",
+    },
+    "dash.scope3_cat1.publisher": {
+        "zh-TW": "發布單位",
+        "en": "Publisher",
+    },
+    "dash.scope3_cat1.announcement_year": {
+        "zh-TW": "公告年份",
+        "en": "Announcement year",
+    },
+    "dash.scope3_cat1.source_url": {
+        "zh-TW": "來源網址",
+        "en": "Source URL",
+    },
+    "dash.scope3_cat1.snapshot": {
+        "zh-TW": "Snapshot SHA-256",
+        "en": "Snapshot SHA-256",
     },
     "dash.scope3_cat1.boundary": {
         "zh-TW": "係數邊界",
@@ -3971,14 +4470,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh-TW": (
             "**Scope 1**：公司直接產生的排放，例如燃料燃燒。\n\n"
             "**Scope 2**：外購能源的間接排放，例如外購電力。\n\n"
-            "**Scope 3**：價值鏈其他間接排放；尚未納入本版本總排放量。"
+            "**Scope 3**：價值鏈其他間接排放。已計算的部分會另外顯示，"
+            "不加入目前的 Scope 1＋Scope 2 公司盤查總量；"
+            "目前可能僅部分涵蓋，不代表完整 Scope 3。"
         ),
         "en": (
             "**Scope 1**: Direct emissions, such as fuel combustion.\n\n"
             "**Scope 2**: Indirect emissions from purchased energy, "
             "such as electricity.\n\n"
-            "**Scope 3**: Other value-chain emissions; "
-            "not included in this version's total."
+            "**Scope 3**: Other value-chain emissions. Calculated Scope 3 "
+            "is shown separately and is not added to the current "
+            "Scope 1 + Scope 2 company inventory total; coverage may be "
+            "partial and is not a complete Scope 3 inventory."
         ),
     },
     "dash.insight.top_scope": {
@@ -8234,6 +8737,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "report.col.rows": {"zh-TW": "資料筆數", "en": "Row count"},
     "report.disp.calculated": {"zh-TW": "已計算", "en": "Calculated"},
     "report.disp.needs_confirmation": {"zh-TW": "待確認", "en": "Needs confirmation"},
+    "report.disp.no_matching_factor": {
+        "zh-TW": "目前無符合係數",
+        "en": "No matching factor",
+    },
     "report.disp.excluded_duplicate": {
         "zh-TW": "排除重複",
         "en": "Excluded as duplicate",

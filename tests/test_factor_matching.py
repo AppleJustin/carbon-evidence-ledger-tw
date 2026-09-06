@@ -417,3 +417,188 @@ def test_existing_raw_and_reference_files_remain_unchanged(tmp_path: Path) -> No
     }
     assert after_raw == before_raw
     assert after_ref == before_ref
+
+
+def _electricity_factor_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "factor_id": "ef_test_grid",
+        "activity_type": "grid_electricity",
+        "factor_status": "ready",
+        "denominator_unit": "kWh",
+        "required_conversion": "not_required",
+        "gas": "CO2",
+        "valid_from": "2025-01-01",
+        "valid_to": "2025-12-31",
+        "notes": "",
+        "source_locator": "",
+        "factor_category": "",
+    }
+    row.update(overrides)
+    return row
+
+
+def _match_electricity(activity: pd.DataFrame, factors: pd.DataFrame):
+    return match_activity_factors(
+        activity_records=activity,
+        emission_factors=pd.DataFrame(factors),
+        calculation_dependencies=pd.DataFrame(),
+    )
+
+
+def test_malformed_valid_from_is_not_open_ended() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=pd.Timestamp("2025-06-01"),
+            activity_end_date=pd.Timestamp("2025-06-01"),
+            reporting_year=2025,
+        ),
+        pd.DataFrame(
+            [
+                _electricity_factor_row(
+                    valid_from="not-a-date",
+                    valid_to="",
+                )
+            ]
+        ),
+    )
+    row = result.activity_readiness.iloc[0]
+    assert row["calculation_readiness"] == "no_factor_configured"
+    assert int(row["candidate_factor_count"]) == 0
+
+
+def test_malformed_valid_to_is_not_open_ended() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=pd.Timestamp("2025-06-01"),
+            activity_end_date=pd.Timestamp("2025-06-01"),
+            reporting_year=2025,
+        ),
+        pd.DataFrame(
+            [_electricity_factor_row(valid_from="2025-01-01", valid_to="31/13/2025")]
+        ),
+    )
+    assert (
+        result.activity_readiness.iloc[0]["calculation_readiness"]
+        == "no_factor_configured"
+    )
+
+
+def test_future_factor_is_not_used_for_activity_date() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=pd.Timestamp("2025-06-01"),
+            activity_end_date=pd.Timestamp("2025-06-01"),
+        ),
+        pd.DataFrame(
+            [_electricity_factor_row(valid_from="2026-01-01", valid_to="2026-12-31")]
+        ),
+    )
+    assert (
+        result.activity_readiness.iloc[0]["calculation_readiness"]
+        == "no_factor_configured"
+    )
+
+
+def test_expired_factor_is_not_used_for_activity_date() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=pd.Timestamp("2025-06-01"),
+            activity_end_date=pd.Timestamp("2025-06-01"),
+        ),
+        pd.DataFrame(
+            [_electricity_factor_row(valid_from="2024-01-01", valid_to="2024-12-31")]
+        ),
+    )
+    assert (
+        result.activity_readiness.iloc[0]["calculation_readiness"]
+        == "no_factor_configured"
+    )
+
+
+def test_midyear_factor_cannot_cover_reporting_year_only() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=None,
+            activity_end_date=None,
+            reporting_year=2025,
+        ),
+        pd.DataFrame(
+            [_electricity_factor_row(valid_from="2025-07-01", valid_to="2025-12-31")]
+        ),
+    )
+    assert (
+        result.activity_readiness.iloc[0]["calculation_readiness"]
+        == "no_factor_configured"
+    )
+
+
+def test_midyear_factor_can_cover_activity_date_inside_window() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=pd.Timestamp("2025-08-01"),
+            activity_end_date=pd.Timestamp("2025-08-01"),
+            reporting_year=2025,
+        ),
+        pd.DataFrame(
+            [_electricity_factor_row(valid_from="2025-07-01", valid_to="2025-12-31")]
+        ),
+    )
+    assert result.activity_readiness.iloc[0]["calculation_readiness"] == "ready"
+
+
+def test_reporting_year_requires_full_calendar_coverage() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=None,
+            activity_end_date=None,
+            reporting_year=2025,
+        ),
+        pd.DataFrame([_electricity_factor_row()]),
+    )
+    assert result.activity_readiness.iloc[0]["calculation_readiness"] == "ready"
+
+
+def test_blank_validity_still_matches_when_table_never_stated_period() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=pd.Timestamp("2025-03-01"),
+            activity_end_date=pd.Timestamp("2025-03-31"),
+        ),
+        pd.DataFrame([_electricity_factor_row(valid_from="", valid_to="")]),
+    )
+    assert result.activity_readiness.iloc[0]["calculation_readiness"] == "ready"
+
+
+def test_multiple_covering_factors_are_ambiguous_not_newest() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=pd.Timestamp("2025-06-01"),
+            activity_end_date=pd.Timestamp("2025-06-01"),
+        ),
+        pd.DataFrame(
+            [
+                _electricity_factor_row(factor_id="ef_a", factor_version="1"),
+                _electricity_factor_row(factor_id="ef_b", factor_version="2"),
+            ]
+        ),
+    )
+    row = result.activity_readiness.iloc[0]
+    assert row["calculation_readiness"] == "blocked_ambiguous_factor"
+    assert int(row["candidate_factor_count"]) == 2
+
+
+def test_unique_expired_historical_row_is_not_selected() -> None:
+    result = _match_electricity(
+        _simple_activity(
+            activity_start_date=None,
+            activity_end_date=None,
+            reporting_year=2025,
+        ),
+        pd.DataFrame(
+            [_electricity_factor_row(valid_from="2023-01-01", valid_to="2023-12-31")]
+        ),
+    )
+    assert (
+        result.activity_readiness.iloc[0]["calculation_readiness"]
+        == "no_factor_configured"
+    )

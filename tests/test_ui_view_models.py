@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from carbon_ledger.pipeline import PipelineRunResult, run_demo_pipeline
 from carbon_ledger.ui import view_models as vm
@@ -296,6 +297,9 @@ def _steel_calc_row(
     include_ghg_scope: bool = True,
     include_scope_3_category: bool = True,
     scope3_category: str | None = None,
+    factor_year: object = 2025,
+    announcement_year: object = None,
+    source_url: str = "",
 ) -> dict[str, object]:
     row: dict[str, object] = {
         "record_id": record_id,
@@ -304,10 +308,14 @@ def _steel_calc_row(
         "calculation_method": "supplier_specific",
         "supplier_name": "Demo Steel",
         "steel_product_type": "steel wire rod",
-        "factor_year": 2025,
+        "factor_year": factor_year,
         "reporting_year": 2025,
         "factor_boundary": "cradle_to_gate",
     }
+    if source_url:
+        row["source_url"] = source_url
+    if announcement_year is not None:
+        row["announcement_year"] = announcement_year
     if include_ghg_scope:
         row["ghg_scope"] = ghg_scope
     if include_scope_3_category:
@@ -401,6 +409,34 @@ def test_category_1_subtotal_excludes_scope3_category_4_steel() -> None:
     assert summary["tco2e"] is None
     assert summary["row_count"] == 0
     assert summary["rows"] == []
+
+
+def test_category_1_subtotal_excludes_blocked_transport_splits() -> None:
+    result = _synthetic_result(
+        calculations=pd.DataFrame(
+            [
+                _steel_calc_row(
+                    "rec_cat4_split",
+                    status="blocked_tier1_inbound_transport_requires_category4_split",
+                    tco2e=None,
+                ),
+                _steel_calc_row(
+                    "rec_s1s2_split",
+                    status="blocked_company_controlled_transport_requires_scope1_or2_split",
+                    tco2e=None,
+                ),
+            ]
+        ),
+        activities=pd.DataFrame(
+            [
+                _activity_row("rec_cat4_split"),
+                _activity_row("rec_s1s2_split"),
+            ]
+        ),
+    )
+    summary = vm.scope3_category1_emissions_summary(result, ZH)
+    assert summary["tco2e"] is None
+    assert summary["row_count"] == 0
 
 
 def test_category_1_subtotal_excludes_steel_missing_scope_3_category() -> None:
@@ -567,3 +603,291 @@ def test_scope_1_and_scope_2_inventory_unaffected_by_category_1_filter() -> None
     cat1 = vm.scope3_category1_emissions_summary(with_steel, ZH)
     assert cat1["tco2e"] == 18.5
     assert cat1["tco2e"] != steel_inventory["inventory_tco2e"]
+
+
+def test_format_display_year_strips_trailing_float_zero() -> None:
+    assert vm.format_display_year(2013.0) == "2013"
+    assert vm.format_display_year("2013.0") == "2013"
+    assert vm.format_display_year(2013) == "2013"
+    assert vm.format_display_year("2013") == "2013"
+    assert vm.format_display_year(2.415) == "2.415"
+
+
+def _steel_24_15_result() -> PipelineRunResult:
+    calc_rows, activity_rows, ghg_rows = _inventory_pair()
+    return _synthetic_result(
+        calculations=pd.DataFrame(
+            [
+                *calc_rows,
+                _steel_calc_row(
+                    "rec_steel",
+                    tco2e=24.15,
+                    factor_year=2013.0,
+                    announcement_year=2013.0,
+                ),
+            ]
+        ),
+        activities=pd.DataFrame(
+            [*activity_rows, _activity_row("rec_steel")]
+        ),
+        ghg=pd.DataFrame(
+            [*ghg_rows, _ghg_eval_row("rec_steel", "scope_3")]
+        ),
+    )
+
+
+def test_scope3_kpi_includes_mapped_category_1_steel_24_15() -> None:
+    result = _steel_24_15_result()
+    states = vm.scope_kpi_states(result, ZH)
+    cat1 = vm.scope3_category1_emissions_summary(result, ZH)
+    inventory = vm.company_inventory_emissions_summary(result, ZH)
+    assert states["scope_3"]["state"] == "calculated"
+    assert states["scope_3"]["value"] == pytest.approx(24.15)
+    assert "24.15" in str(states["scope_3"]["caption"])
+    assert "Category 1－採購商品與服務" in str(states["scope_3"]["caption"])
+    assert "尚不代表完整 Scope 3 總量" in str(states["scope_3"]["caption"])
+    assert "尚未納入計算" not in str(states["scope_3"]["caption"])
+    assert cat1["tco2e"] == pytest.approx(24.15)
+    assert cat1["row_count"] == 1
+    assert inventory["scope_1"] == pytest.approx(10.0)
+    assert inventory["scope_2"] == pytest.approx(5.0)
+    assert inventory["inventory_tco2e"] == pytest.approx(15.0)
+    assert inventory["inventory_tco2e"] != pytest.approx(15.0 + 24.15)
+    assert cat1["tco2e"] == pytest.approx(states["scope_3"]["value"])
+
+
+def test_scope3_summary_and_category1_share_calculation_results() -> None:
+    result = _steel_24_15_result()
+    summary = vm.scope3_emissions_summary(result, ZH)
+    cat1 = vm.scope3_category1_emissions_summary(result, ZH)
+    inventory = vm.company_inventory_emissions_summary(result, ZH)
+    steel_ids = {
+        str(row["record_id"])
+        for row in result.calculation_results.to_dict(orient="records")
+        if str(row.get("record_id")) == "rec_steel"
+    }
+    assert steel_ids == {"rec_steel"}
+    assert summary["tco2e"] == pytest.approx(cat1["tco2e"])
+    assert summary["row_count"] == cat1["row_count"] == 1
+    assert "rec_steel" not in vm.company_inventory_record_ids(result)
+    assert inventory["inventory_tco2e"] + cat1["tco2e"] != inventory[
+        "inventory_tco2e"
+    ]
+
+
+def test_scope3_kpi_excludes_needs_review_r410a() -> None:
+    calc_rows, activity_rows, ghg_rows = _inventory_pair()
+    result = _synthetic_result(
+        calculations=pd.DataFrame(
+            [
+                *calc_rows,
+                {
+                    "record_id": "rec_r410a",
+                    "calculation_status": "calculated",
+                    "calculated_tco2e": 3.847,
+                    "ghg_scope": "scope_3",
+                    "scope_3_category": "category_1",
+                },
+            ]
+        ),
+        activities=pd.DataFrame(
+            [
+                *activity_rows,
+                _activity_row("rec_r410a", "refrigerant_refill"),
+            ]
+        ),
+        ghg=pd.DataFrame(
+            [
+                *ghg_rows,
+                _ghg_eval_row(
+                    "rec_r410a", "scope_3", mapping_status="needs_review"
+                ),
+            ]
+        ),
+    )
+    states = vm.scope_kpi_states(result, ZH)
+    assert states["scope_3"]["state"] == "empty"
+    assert states["scope_3"]["value"] is None
+    assert vm.scope3_emissions_summary(result, ZH)["tco2e"] is None
+
+
+def test_scope3_kpi_excludes_outside_boundary() -> None:
+    calc_rows, activity_rows, ghg_rows = _inventory_pair()
+    result = _synthetic_result(
+        calculations=pd.DataFrame(
+            [
+                *calc_rows,
+                {
+                    "record_id": "rec_r32_out",
+                    "calculation_status": "calculated",
+                    "calculated_tco2e": 2.031,
+                    "ghg_scope": "scope_3",
+                    "scope_3_category": "category_1",
+                },
+            ]
+        ),
+        activities=pd.DataFrame(
+            [
+                *activity_rows,
+                _activity_row("rec_r32_out", "refrigerant_refill"),
+            ]
+        ),
+        ghg=pd.DataFrame(
+            [
+                *ghg_rows,
+                _ghg_eval_row(
+                    "rec_r32_out",
+                    "scope_3",
+                    mapping_status="outside_boundary",
+                ),
+            ]
+        ),
+    )
+    states = vm.scope_kpi_states(result, ZH)
+    assert states["scope_3"]["state"] == "empty"
+    assert states["scope_3"]["value"] is None
+
+
+def test_scope3_kpi_excludes_blocked_and_no_matching_factor() -> None:
+    calc_rows, activity_rows, ghg_rows = _inventory_pair()
+    result = _synthetic_result(
+        calculations=pd.DataFrame(
+            [
+                *calc_rows,
+                _steel_calc_row(
+                    "rec_blocked",
+                    status="blocked_tier1_inbound_transport_requires_category4_split",
+                    tco2e=99.0,
+                ),
+                _steel_calc_row(
+                    "rec_nofactor",
+                    status="no_matching_factor",
+                    tco2e=50.0,
+                ),
+            ]
+        ),
+        activities=pd.DataFrame(
+            [
+                *activity_rows,
+                _activity_row("rec_blocked"),
+                _activity_row("rec_nofactor"),
+            ]
+        ),
+        ghg=pd.DataFrame(
+            [
+                *ghg_rows,
+                _ghg_eval_row("rec_blocked", "scope_3"),
+                _ghg_eval_row("rec_nofactor", "scope_3"),
+            ]
+        ),
+    )
+    states = vm.scope_kpi_states(result, ZH)
+    assert states["scope_3"]["state"] == "empty"
+    assert states["scope_3"]["value"] is None
+
+
+def test_scope3_kpi_excludes_missing_scope_3_category() -> None:
+    calc_rows, activity_rows, ghg_rows = _inventory_pair()
+    result = _synthetic_result(
+        calculations=pd.DataFrame(
+            [
+                *calc_rows,
+                _steel_calc_row(
+                    "rec_missing_cat",
+                    tco2e=24.15,
+                    include_scope_3_category=False,
+                ),
+            ]
+        ),
+        activities=pd.DataFrame(
+            [*activity_rows, _activity_row("rec_missing_cat")]
+        ),
+        ghg=pd.DataFrame(
+            [*ghg_rows, _ghg_eval_row("rec_missing_cat", "scope_3")]
+        ),
+    )
+    states = vm.scope_kpi_states(result, ZH)
+    assert states["scope_3"]["state"] == "empty"
+    assert states["scope_3"]["value"] is None
+    cat1 = vm.scope3_category1_emissions_summary(result, ZH)
+    assert cat1["tco2e"] is None
+
+
+def test_scope3_kpi_empty_when_no_qualifying_rows() -> None:
+    calc_rows, activity_rows, ghg_rows = _inventory_pair()
+    result = _synthetic_result(
+        calculations=pd.DataFrame(calc_rows),
+        activities=pd.DataFrame(activity_rows),
+        ghg=pd.DataFrame(ghg_rows),
+    )
+    states = vm.scope_kpi_states(result, ZH)
+    summary = vm.scope3_emissions_summary(result, ZH)
+    assert states["scope_3"]["state"] == "empty"
+    assert states["scope_3"]["value"] is None
+    assert states["scope_3"]["caption"] == "目前尚無可納入的 Scope 3 計算結果。"
+    assert summary["caption"] == states["scope_3"]["caption"]
+    assert "尚未納入計算" not in states["scope_3"]["caption"]
+    assert "不支援" not in states["scope_3"]["caption"]
+
+
+def test_category1_factor_year_display_is_2013_not_float() -> None:
+    result = _steel_24_15_result()
+    cat1 = vm.scope3_category1_emissions_summary(result, ZH)
+    assert cat1["rows"][0]["factor_year"] == "2013"
+    assert cat1["rows"][0]["announcement_year"] == "2013"
+    assert cat1["rows"][0]["factor_year"] != "2013.0"
+    raw = result.calculation_results.loc[
+        result.calculation_results["record_id"] == "rec_steel", "factor_year"
+    ].iloc[0]
+    assert float(raw) == pytest.approx(2013.0)
+
+
+def test_category1_source_url_href_encodes_query_and_drops_api_key() -> None:
+    raw = (
+        "https://data.moenv.gov.tw/api/v2/cfp_p_02"
+        "?limit=1000&sort=ImportDate desc&format=JSON&api_key=SECRET"
+    )
+    calc_rows, activity_rows, ghg_rows = _inventory_pair()
+    result = _synthetic_result(
+        calculations=pd.DataFrame(
+            [
+                *calc_rows,
+                _steel_calc_row(
+                    "rec_steel",
+                    tco2e=24.15,
+                    factor_year=2013,
+                    source_url=raw,
+                ),
+            ]
+        ),
+        activities=pd.DataFrame(
+            [*activity_rows, _activity_row("rec_steel")]
+        ),
+        ghg=pd.DataFrame(
+            [*ghg_rows, _ghg_eval_row("rec_steel", "scope_3")]
+        ),
+    )
+    href = vm.scope3_category1_emissions_summary(result, ZH)["rows"][0][
+        "source_url"
+    ]
+    markdown = vm.source_url_markdown(href)
+    assert "sort=" in href
+    assert "ImportDate%20desc" in href or "ImportDate+desc" in href
+    assert "format=JSON" in href
+    assert "api_key" not in href
+    assert "SECRET" not in href
+    assert markdown == f"[{href}]({href})"
+    assert "sort=" in markdown
+    assert "ImportDate%20desc" in markdown or "ImportDate+desc" in markdown
+    assert "format=JSON" in markdown
+    assert "api_key" not in markdown
+
+
+def test_hero_caption_omits_calculated_scope3() -> None:
+    result = _steel_24_15_result()
+    states = vm.scope_kpi_states(result, ZH)
+    caption = vm.labeled_scope_hero_caption(states, ZH)
+    assert "Scope 3" not in caption
+    assert "24.15" not in caption
+    assert "Scope 1" in caption
+    assert "Scope 2" in caption

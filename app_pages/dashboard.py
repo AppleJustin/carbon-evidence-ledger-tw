@@ -39,15 +39,18 @@ from carbon_ledger.ui.motion import (
 )
 from carbon_ledger.ui.refrigerant_boundary_form import (
     render_confirmation_flash,
-    render_refrigerant_boundary_confirmation,
 )
 from carbon_ledger.ui.state import (
     ANALYSIS_PHASE_ANALYZING,
+    ANALYSIS_PHASE_COMPLETE,
     ANALYSIS_PHASE_FAILED,
     REPO_ROOT,
+    STATE_ANALYSIS_PHASE,
     STATE_ANALYSIS_RUNNING,
     STATE_INTAKE_RESULT,
+    STATE_INTAKE_STEP,
     STATE_INTAKE_TABLE,
+    STATE_NAVIGATE_TO_RESULTS,
     duplicate_review_decisions_from_state,
     format_data_period_label,
     get_analysis_source_summary,
@@ -70,6 +73,7 @@ from carbon_ledger.ui.view_models import (
     scope_kpi_states,
     should_show_coverage_chart,
     should_show_unresolved_cta,
+    source_url_markdown,
 )
 from carbon_ledger.ui.view_models_compliance import (
     home_requirement_summary,
@@ -166,7 +170,7 @@ total_count = int(summary["activities"])
 source_count = int(summary["source_documents"])
 insights = executive_emissions_insights(result, lang)
 req_summary = home_requirement_summary(assessment, lang)
-scope_states = scope_kpi_states(result)
+scope_states = scope_kpi_states(result, lang)
 
 intake_result = st.session_state.get(STATE_INTAKE_RESULT)
 uploaded_table = st.session_state.get(STATE_INTAKE_TABLE)
@@ -260,7 +264,14 @@ if st.button(t("dash.hero.factor_details", lang), key="dash_hero_factor_details"
     st.switch_page("app_pages/activity_explorer.py")
 
 render_confirmation_flash(result, lang)
-render_refrigerant_boundary_confirmation(result, lang)
+if uploaded and st.button(
+    t("dash.cta.edit_emissions_data", lang),
+    key="dash_edit_emissions_data",
+):
+    st.session_state[STATE_INTAKE_STEP] = 3
+    st.session_state[STATE_ANALYSIS_PHASE] = ANALYSIS_PHASE_COMPLETE
+    st.session_state[STATE_NAVIGATE_TO_RESULTS] = False
+    st.switch_page("app_pages/data_intake.py")
 
 render_greeting_block(
     company=company_name,
@@ -305,7 +316,7 @@ elif not uploaded and complete:
     st.caption("✓ " + t("dash.coverage_all_done", lang))
 
 # 2. Scope 分解
-scope_states = scope_kpi_states(result)
+scope_states = scope_kpi_states(result, lang)
 render_section_header(
     t("dash.section_scope_main", lang),
     scroll_key="scope-breakdown",
@@ -328,11 +339,19 @@ def _render_scope_kpi(
             play=play_hero_count,
             run=analysis_token,
         )
+        if scope_key == "scope_3":
+            caption = str(state.get("caption") or t("dash.scope3.partial", lang))
+            st.markdown(
+                "<div data-cel-tour-target='results-scope3'>"
+                f"{html.escape(caption)}"
+                "</div>",
+                unsafe_allow_html=True,
+            )
         return
-    if state.get("state") == "unsupported":
+    if scope_key == "scope_3":
         st.markdown(
             "<div data-cel-tour-target='results-scope3'>"
-            f"{html.escape(t('dash.hero.scope3_version', lang))}"
+            f"{html.escape(t('dash.scope3.empty', lang))}"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -378,17 +397,53 @@ if cat1.get("row_count"):
         if row.get("steel_product_type"):
             st.markdown(
                 f"- {t('dash.scope3_cat1.product', lang)}："
-                f"{row['steel_product_type']}"
+                f"{row.get('official_name') or row['steel_product_type']}"
+            )
+        if row.get("factor_id"):
+            st.markdown(
+                f"- {t('dash.scope3_cat1.factor_id', lang)}："
+                f"{row['factor_id']}"
+            )
+        if row.get("factor_value") not in (None, ""):
+            unit = row.get("factor_unit") or ""
+            st.markdown(
+                f"- {t('dash.scope3_cat1.factor_value', lang)}："
+                f"{row['factor_value']} {unit}".rstrip()
+            )
+        if row.get("publisher"):
+            st.markdown(
+                f"- {t('dash.scope3_cat1.publisher', lang)}："
+                f"{row['publisher']}"
+            )
+        if row.get("factor_version"):
+            st.markdown(
+                f"- {t('dash.scope3_cat1.factor_version', lang)}："
+                f"{row['factor_version']}"
+            )
+        if row.get("announcement_year") or row.get("factor_year"):
+            st.markdown(
+                f"- {t('dash.scope3_cat1.announcement_year', lang)}："
+                f"{row.get('announcement_year') or row.get('factor_year')}"
             )
         if row.get("factor_year"):
             st.markdown(
                 f"- {t('dash.scope3_cat1.factor_year', lang)}："
                 f"{row['factor_year']}"
             )
-        if row.get("factor_source_id"):
+        if row.get("factor_source_id") or row.get("evidence_reference"):
             st.markdown(
                 f"- {t('dash.scope3_cat1.factor_source', lang)}："
-                f"{row['factor_source_id']}"
+                f"{row.get('factor_source_id') or row.get('evidence_reference')}"
+            )
+        if row.get("source_url"):
+            st.markdown(
+                f"- {t('dash.scope3_cat1.source_url', lang)}："
+                f"{source_url_markdown(row['source_url'])}"
+            )
+        if row.get("snapshot_hash"):
+            st.markdown(
+                f"- {t('dash.scope3_cat1.snapshot', lang)}："
+                f"{row['snapshot_hash']}"
             )
         if row.get("factor_boundary"):
             st.markdown(

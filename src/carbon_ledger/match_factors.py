@@ -111,13 +111,21 @@ def _text(value: Any) -> str:
     return str(value).strip()
 
 
-def _parse_optional_timestamp(value: Any) -> pd.Timestamp | None:
+def _parse_validity_bound(value: Any) -> tuple[str, pd.Timestamp | None]:
+    """Return (blank|ok|malformed, timestamp). Malformed is never open-ended."""
     if _is_blank(value):
-        return None
+        return "blank", None
     parsed = pd.to_datetime(value, errors="coerce")
     if pd.isna(parsed):
+        return "malformed", None
+    return "ok", pd.Timestamp(parsed)
+
+
+def _parse_optional_timestamp(value: Any) -> pd.Timestamp | None:
+    kind, stamp = _parse_validity_bound(value)
+    if kind != "ok":
         return None
-    return pd.Timestamp(parsed)
+    return stamp
 
 
 def _activity_unit(row: pd.Series) -> str:
@@ -131,19 +139,41 @@ def _factor_covers_activity_period(
     factor_row: pd.Series,
     activity_start: Any,
     activity_end: Any,
+    *,
+    reporting_year: int | None = None,
 ) -> bool:
-    """Return False when the activity period is clearly outside factor validity."""
-    valid_from = _parse_optional_timestamp(factor_row.get("valid_from"))
-    valid_to = _parse_optional_timestamp(factor_row.get("valid_to"))
-    start = _parse_optional_timestamp(activity_start)
-    end = _parse_optional_timestamp(activity_end)
+    """True only when validity covers the activity date or full reporting year.
 
-    if start is None or end is None:
-        return True
-
-    if valid_from is not None and end < valid_from:
+    Malformed valid_from/valid_to are not treated as blank or open-ended.
+    Blank validity remains usable for tables that never stated a period.
+    """
+    from_kind, valid_from = _parse_validity_bound(factor_row.get("valid_from"))
+    to_kind, valid_to = _parse_validity_bound(factor_row.get("valid_to"))
+    if from_kind == "malformed" or to_kind == "malformed":
         return False
-    if valid_to is not None and start > valid_to:
+    start_kind, start = _parse_validity_bound(activity_start)
+    end_kind, end = _parse_validity_bound(activity_end)
+    if start_kind == "malformed" or end_kind == "malformed":
+        return False
+    if start is None and end is None:
+        if reporting_year is None:
+            return valid_from is None and valid_to is None
+        year_start = pd.Timestamp(int(reporting_year), 1, 1)
+        year_end = pd.Timestamp(int(reporting_year), 12, 31)
+        if valid_from is not None and valid_from > year_start:
+            return False
+        if valid_to is not None and valid_to < year_end:
+            return False
+        return True
+    if start is None:
+        start = end
+    if end is None:
+        end = start
+    if start is None or end is None:
+        return False
+    if valid_from is not None and valid_from > start:
+        return False
+    if valid_to is not None and valid_to < end:
         return False
     return True
 
@@ -232,6 +262,18 @@ def _electricity_factor_applies(
     return activity_category == category
 
 
+def _reporting_year_value(value: Any) -> int | None:
+    if _is_blank(value):
+        return None
+    try:
+        year = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if year < 1900 or year > 2100:
+        return None
+    return year
+
+
 def _match_grid_electricity(
     *,
     record_id: str,
@@ -241,6 +283,7 @@ def _match_grid_electricity(
     activity_end: Any,
     process_use: str,
     emission_factors: pd.DataFrame,
+    reporting_year: int | None = None,
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     factors = _active_factors(
@@ -248,7 +291,10 @@ def _match_grid_electricity(
     )
     for _, factor in factors.iterrows():
         if not _factor_covers_activity_period(
-            factor, activity_start, activity_end
+            factor,
+            activity_start,
+            activity_end,
+            reporting_year=reporting_year,
         ):
             continue
         if not _electricity_factor_applies(factor, process_use):
@@ -307,6 +353,7 @@ def _match_fuel_combustion(
     combustion_context: str,
     blocked_reason_prefix: str,
     fuel_subtype: str = "",
+    reporting_year: int | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """Return (candidates, group_override_status).
 
@@ -319,6 +366,7 @@ def _match_fuel_combustion(
         activity_start=activity_start,
         activity_end=activity_end,
         fuel_subtype=fuel_subtype,
+        reporting_year=reporting_year,
     )
     factors = _active_factors(
         emission_factors,
@@ -328,7 +376,10 @@ def _match_fuel_combustion(
     eligible_rows: list[pd.Series] = []
     for _, factor in factors.iterrows():
         if not _factor_covers_activity_period(
-            factor, activity_start, activity_end
+            factor,
+            activity_start,
+            activity_end,
+            reporting_year=reporting_year,
         ):
             continue
         status = _text(factor.get("factor_status"))
@@ -400,6 +451,7 @@ def _match_natural_gas(
     emission_factors: pd.DataFrame,
     heating_values: pd.DataFrame,
     fuel_subtype: str = "",
+    reporting_year: int | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     return _match_fuel_combustion(
         record_id=record_id,
@@ -412,6 +464,7 @@ def _match_natural_gas(
         combustion_context="stationary_combustion",
         blocked_reason_prefix="Natural-gas",
         fuel_subtype=fuel_subtype,
+        reporting_year=reporting_year,
     )
 
 
@@ -425,6 +478,7 @@ def _match_diesel(
     activity_end: Any,
     emission_factors: pd.DataFrame,
     heating_values: pd.DataFrame,
+    reporting_year: int | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     if process_use != "company_vehicle":
         return [], ""
@@ -438,6 +492,7 @@ def _match_diesel(
         heating_values=heating_values,
         combustion_context="mobile_combustion",
         blocked_reason_prefix="Company-vehicle diesel",
+        reporting_year=reporting_year,
     )
 
 
@@ -740,6 +795,7 @@ def match_activity_factors(
         fuel_subtype = _text(activity.get("fuel_subtype"))
         start = activity.get("activity_start_date")
         end = activity.get("activity_end_date")
+        reporting_year = _reporting_year_value(activity.get("reporting_year"))
 
         candidates: list[dict[str, Any]] = []
         group_override = ""
@@ -752,6 +808,7 @@ def match_activity_factors(
                 activity_end=end,
                 process_use=process_use,
                 emission_factors=factors,
+                reporting_year=reporting_year,
             )
         elif activity_type == "natural_gas":
             candidates, group_override = _match_natural_gas(
@@ -763,6 +820,7 @@ def match_activity_factors(
                 emission_factors=factors,
                 heating_values=heating,
                 fuel_subtype=fuel_subtype,
+                reporting_year=reporting_year,
             )
         elif activity_type == "diesel":
             candidates, group_override = _match_diesel(
@@ -774,6 +832,7 @@ def match_activity_factors(
                 activity_end=end,
                 emission_factors=factors,
                 heating_values=heating,
+                reporting_year=reporting_year,
             )
 
         all_candidates.extend(candidates)

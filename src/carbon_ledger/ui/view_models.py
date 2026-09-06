@@ -6,6 +6,7 @@ internal status codes from primary UI surfaces and honor UI language.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any
 
 import pandas as pd
 
+from carbon_ledger.cfp_p_02 import redact_api_key_from_url
 from carbon_ledger.pipeline import PipelineRunResult
 from carbon_ledger.ui.i18n import DEFAULT_LANG, status_label, t
 
@@ -23,6 +25,7 @@ ACTIVITY_KEYS = {
     "natural_gas": "activity.natural_gas",
     "diesel": "activity.diesel",
     "refrigerant_refill": "activity.refrigerant_refill",
+    "refrigerant_actual_refill": "activity.refrigerant_refill",
     "purchased_steel": "activity.purchased_steel",
     "finished_goods_output": "activity.finished_goods_output",
     "third_party_transport": "activity.third_party_transport",
@@ -61,6 +64,13 @@ CUSTOMER_SCHEMA_LABEL_KEYS = {
     "includes_tier1_to_reporting_company_transport": (
         "intake.field.includes_inbound_transport"
     ),
+    "factor_includes_tier1_to_reporting_company_transport": (
+        "intake.field.factor_includes_inbound_transport"
+    ),
+    "tier1_to_reporting_company_transport_control": (
+        "intake.field.transport_control"
+    ),
+    "source_document_id": "intake.field.source_document_id",
 }
 
 _UNCONFIRMED_SITE_TOKENS = frozenset(
@@ -79,6 +89,9 @@ ATTENTION_TITLE_KEYS = {
     "blocked_missing_conversion": "status.attention_blocked",
     "blocked_natural_gas_type_required": "status.attention_blocked",
     "no_factor_configured": "status.attention_factor",
+    "no_matching_factor": "status.attention_factor",
+    "blocked_missing_product_type": "status.attention_blocked",
+    "blocked_ambiguous_factor": "status.attention_blocked",
 }
 
 ATTENTION_ACTION_KEYS = {
@@ -101,6 +114,70 @@ def _text(value: Any) -> str:
     except (TypeError, ValueError):
         pass
     return str(value).strip()
+
+
+def public_source_url(url: str) -> str:
+    """Redact secrets and encode query values so the whole URL is one href."""
+    return redact_api_key_from_url(_text(url))
+
+
+def source_url_markdown(url: str) -> str:
+    """Markdown link whose href keeps sort, desc, and format as one target."""
+    href = public_source_url(url)
+    if not href:
+        return ""
+    return f"[{href}]({href})"
+
+
+def format_display_year(value: Any) -> str:
+    """Format a year for display only. Source values are not mutated.
+
+    Integer years such as ``2013.0`` render as ``2013``. Non-year numbers
+    and non-numeric text are left unchanged.
+    """
+    text = _text(value)
+    if not text:
+        return ""
+    try:
+        number = float(text)
+    except (TypeError, ValueError):
+        return text
+    if number.is_integer():
+        year = int(number)
+        if 1000 <= abs(year) <= 9999:
+            return str(year)
+    return text
+
+
+def _format_scope3_tco2e(value: float) -> str:
+    text = f"{float(value):.4f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _scope3_category_code(value: Any) -> str:
+    text = _text(value)
+    if not text:
+        return ""
+    match = re.match(r"(category_\d+)", text.lower())
+    return match.group(1) if match else text
+
+
+def _scope3_category_label(code: str, lang: str) -> str:
+    key = f"dash.scope3.category.{code}"
+    label = t(key, lang)
+    if label != key:
+        return label
+    match = re.match(r"category_(\d+)$", code)
+    if match:
+        return f"Category {match.group(1)}"
+    return code
+
+
+def _scope3_category_sort_key(code: str) -> tuple[int, int | str]:
+    match = re.match(r"category_(\d+)$", code)
+    if match:
+        return (0, int(match.group(1)))
+    return (1, code)
 
 
 def not_run_label(lang: str = DEFAULT_LANG) -> str:
@@ -158,6 +235,7 @@ def calculation_explanation(
         "explain.blocked_missing_conversion",
         "explain.blocked_natural_gas_type_required",
         "explain.no_factor_configured",
+        "explain.no_matching_factor",
         "explain.not_emissions_activity",
     }:
         return t(msg, lang)
@@ -176,6 +254,7 @@ def calculation_next_action(status: str, lang: str = DEFAULT_LANG) -> str:
         "next.blocked_missing_conversion",
         "next.blocked_natural_gas_type_required",
         "next.no_factor_configured",
+        "next.no_matching_factor",
         "next.not_emissions_activity",
     }
     if msg in known:
@@ -603,8 +682,9 @@ def scope3_category1_emissions_summary(
         return empty
     detail: list[dict[str, Any]] = []
     for _, row in rows.iterrows():
-        factor_year = _text(row.get("factor_year"))
-        reporting_year = _text(row.get("reporting_year"))
+        factor_year = format_display_year(row.get("factor_year"))
+        reporting_year = format_display_year(row.get("reporting_year"))
+        announcement_year = format_display_year(row.get("announcement_year"))
         temporal_warning = False
         try:
             if factor_year and reporting_year:
@@ -619,10 +699,28 @@ def scope3_category1_emissions_summary(
                 "supplier_name": _text(row.get("supplier_name")),
                 "steel_product_type": _text(row.get("steel_product_type"))
                 or _text(row.get("product_identifier")),
+                "official_name": _text(row.get("official_name"))
+                or _text(row.get("steel_product_type")),
+                "factor_value": row.get("factor_value"),
+                "factor_unit": (
+                    f"{_text(row.get('factor_numerator_unit'))}/"
+                    f"{_text(row.get('factor_denominator_unit'))}"
+                    if _text(row.get("factor_numerator_unit"))
+                    and _text(row.get("factor_denominator_unit"))
+                    else ""
+                ),
+                "publisher": _text(row.get("publisher")),
+                "announcement_year": announcement_year,
+                "retrieved_at": _text(row.get("retrieved_at")),
                 "factor_year": factor_year,
                 "reporting_year": reporting_year,
-                "factor_source_id": _text(row.get("factor_source_id"))
-                or _text(row.get("source_reference_id")),
+                "factor_id": _text(row.get("factor_id")),
+                "factor_version": _text(row.get("factor_version")),
+                "factor_source_id": _text(row.get("factor_source_id")),
+                "source_record_id": _text(row.get("source_record_id")),
+                "source_url": public_source_url(row.get("source_url")),
+                "snapshot_hash": _text(row.get("snapshot_hash")),
+                "match_reason": _text(row.get("match_reason")),
                 "evidence_reference": _text(row.get("evidence_reference")),
                 "factor_boundary": _text(row.get("factor_boundary")),
                 "factor_geography": _text(row.get("factor_geography")),
@@ -636,6 +734,111 @@ def scope3_category1_emissions_summary(
         "label": t("dash.scope3_cat1.title", lang),
         "not_in_inventory": t("dash.scope3_cat1.not_in_inventory", lang),
         "rows": detail,
+    }
+
+
+def _qualifying_scope3_rows(result: PipelineRunResult) -> pd.DataFrame:
+    """Calculated, mapped Scope 3 rows that have an explicit category.
+
+    Scope is never inferred from ``activity_type``. Blocked, needs-review,
+    outside-boundary, not-applicable, no-matching-factor, and missing rows
+    are excluded. These rows are never added to the Scope 1 + Scope 2
+    company inventory.
+    """
+    calculations = result.calculation_results.copy()
+    ghg = result.ghg_evaluations.copy()
+    empty = pd.DataFrame()
+    if calculations.empty or ghg.empty:
+        return empty
+    if "mapping_status" not in ghg.columns or "ghg_scope" not in ghg.columns:
+        return empty
+    calculated = calculations[
+        calculations["calculation_status"].astype(str) == "calculated"
+    ].copy()
+    if calculated.empty:
+        return empty
+    keep = ["record_id", "mapping_status", "ghg_scope"]
+    overlap = [
+        column
+        for column in ("mapping_status", "ghg_scope")
+        if column in calculated.columns
+    ]
+    left = calculated.drop(columns=overlap) if overlap else calculated
+    merged = left.merge(ghg[keep], on="record_id", how="left")
+    merged["calculated_tco2e"] = pd.to_numeric(
+        merged["calculated_tco2e"], errors="coerce"
+    )
+    merged = merged.dropna(subset=["calculated_tco2e"])
+    if merged.empty:
+        return empty
+    ghg_category: dict[str, str] = {}
+    for _, grow in ghg.iterrows():
+        record_id = _text(grow.get("record_id"))
+        category = _text(grow.get("scope_3_category")) or _text(
+            grow.get("scope3_category")
+        )
+        if record_id and category and record_id not in ghg_category:
+            ghg_category[record_id] = category
+
+    def _row_category(row: pd.Series) -> str:
+        category = _text(row.get("scope_3_category")) or _text(
+            row.get("scope3_category")
+        )
+        if category:
+            return category
+        return ghg_category.get(_text(row.get("record_id")), "")
+
+    merged["_scope3_category"] = merged.apply(_row_category, axis=1)
+    selected = merged[
+        (merged["mapping_status"].astype(str) == "mapped")
+        & (merged["ghg_scope"].astype(str) == "scope_3")
+        & (merged["_scope3_category"].map(_text) != "")
+    ].copy()
+    if selected.empty:
+        return empty
+    return selected.reset_index(drop=True)
+
+
+def scope3_emissions_summary(
+    result: PipelineRunResult,
+    lang: str = DEFAULT_LANG,
+) -> dict[str, Any]:
+    """Independent Scope 3 card total. Never added to Scope 1 + Scope 2."""
+    rows = _qualifying_scope3_rows(result)
+    empty = {
+        "tco2e": None,
+        "row_count": 0,
+        "categories": [],
+        "category_labels": [],
+        "caption": t("dash.scope3.empty", lang),
+        "partial": True,
+    }
+    if rows.empty:
+        return empty
+    codes: list[str] = []
+    seen: set[str] = set()
+    for raw in rows["_scope3_category"].tolist():
+        code = _scope3_category_code(raw)
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        codes.append(code)
+    codes.sort(key=_scope3_category_sort_key)
+    labels = [_scope3_category_label(code, lang) for code in codes]
+    total = float(rows["calculated_tco2e"].sum())
+    value_text = _format_scope3_tco2e(total)
+    return {
+        "tco2e": total,
+        "row_count": int(len(rows)),
+        "categories": codes,
+        "category_labels": labels,
+        "caption": t(
+            "dash.scope3.partial",
+            lang,
+            value=value_text,
+            categories="、".join(labels),
+        ),
+        "partial": True,
     }
 
 
@@ -884,8 +1087,11 @@ def executive_emissions_insight(
     return items[0] if items else ""
 
 
-def scope_kpi_states(result: PipelineRunResult) -> dict[str, dict[str, Any]]:
-    """Distinguish calculated Scope totals from unresolved / unsupported."""
+def scope_kpi_states(
+    result: PipelineRunResult,
+    lang: str = DEFAULT_LANG,
+) -> dict[str, dict[str, Any]]:
+    """Distinguish calculated Scope totals from unresolved / empty Scope 3."""
     totals = calculated_emissions_by_product_scope(result)
     calculated_present = {"scope_1": False, "scope_2": False}
     inventory = _company_inventory_rows(result)
@@ -902,13 +1108,21 @@ def scope_kpi_states(result: PipelineRunResult) -> dict[str, dict[str, Any]]:
             }
         else:
             states[key] = {"state": "pending", "value": None}
-    if totals.get("scope_3") is not None:
+    scope3 = scope3_emissions_summary(result, lang)
+    if scope3["row_count"] > 0 and scope3.get("tco2e") is not None:
         states["scope_3"] = {
             "state": "calculated",
-            "value": float(totals["scope_3"]),
+            "value": float(scope3["tco2e"]),
+            "caption": scope3["caption"],
+            "categories": list(scope3["categories"]),
         }
     else:
-        states["scope_3"] = {"state": "unsupported", "value": None}
+        states["scope_3"] = {
+            "state": "empty",
+            "value": None,
+            "caption": scope3["caption"],
+            "categories": [],
+        }
     return states
 
 
@@ -1730,6 +1944,7 @@ DISPOSITION_CALCULATED = "calculated"
 DISPOSITION_NEEDS_CONFIRMATION = "needs_confirmation"
 DISPOSITION_EXCLUDED_DUPLICATE = "excluded_duplicate"
 DISPOSITION_EXCLUDED_OUT_OF_SCOPE = "excluded_out_of_scope"
+DISPOSITION_NO_MATCHING_FACTOR = "no_matching_factor"
 DISPOSITION_UNSUPPORTED = "unsupported"
 DISPOSITION_INVALID = "invalid"
 
@@ -1738,6 +1953,7 @@ _DISPOSITIONS = (
     DISPOSITION_NEEDS_CONFIRMATION,
     DISPOSITION_EXCLUDED_DUPLICATE,
     DISPOSITION_EXCLUDED_OUT_OF_SCOPE,
+    DISPOSITION_NO_MATCHING_FACTOR,
     DISPOSITION_UNSUPPORTED,
     DISPOSITION_INVALID,
 )
@@ -1765,7 +1981,6 @@ _HELD_ISSUE_CODES = frozenset(
 _UNSUPPORTED_CALC_STATUSES = frozenset(
     {
         "unsupported_activity_type",
-        "no_factor_configured",
         "blocked_missing_conversion",
         "blocked_ambiguous_conversion",
         "unsupported_conversion",
@@ -1850,6 +2065,7 @@ def reconcile_row_dispositions(
     calc_by_record: dict[str, str] = {}
     readiness_by_record: dict[str, str] = {}
     activity_type_by_record: dict[str, str] = {}
+    method_by_record: dict[str, str] = {}
     mapping_by_record: dict[str, str] = {}
     ghg_scope_by_record: dict[str, str] = {}
 
@@ -1862,6 +2078,7 @@ def reconcile_row_dispositions(
                 if source_row:
                     record_by_row[source_row] = record_id
                 activity_type_by_record[record_id] = _text(row.get("activity_type"))
+                method_by_record[record_id] = _text(row.get("calculation_method"))
         calcs = pipeline_result.calculation_results
         if calcs is not None and not calcs.empty:
             for _, row in calcs.iterrows():
@@ -1890,6 +2107,13 @@ def reconcile_row_dispositions(
                 record_id = _text(row.get("record_id"))
                 if source_row and record_id:
                     record_by_row.setdefault(source_row, record_id)
+                if record_id:
+                    activity_type_by_record.setdefault(
+                        record_id, _text(row.get("activity_type"))
+                    )
+                    method_by_record.setdefault(
+                        record_id, _text(row.get("calculation_method"))
+                    )
         rejected = getattr(intake_result, "rejected_rows", None)
         if rejected is not None and not getattr(rejected, "empty", True):
             for _, row in rejected.iterrows():
@@ -1915,6 +2139,33 @@ def reconcile_row_dispositions(
             continue
         if calc_status == "not_emissions_activity":
             by_row[source_row] = DISPOSITION_EXCLUDED_OUT_OF_SCOPE
+            continue
+        activity_type = activity_type_by_record.get(record_id, "")
+        if activity_type == "purchased_steel":
+            method = method_by_record.get(record_id, "")
+            if calc_status == "calculated":
+                mapping_status = mapping_by_record.get(record_id, "")
+                ghg_scope = ghg_scope_by_record.get(record_id, "")
+                if mapping_status == "outside_boundary":
+                    by_row[source_row] = DISPOSITION_EXCLUDED_OUT_OF_SCOPE
+                    continue
+                if not mapping_status or (
+                    mapping_status == "mapped" and ghg_scope == "scope_3"
+                ):
+                    by_row[source_row] = DISPOSITION_CALCULATED
+                    continue
+                by_row[source_row] = DISPOSITION_NEEDS_CONFIRMATION
+                continue
+            if calc_status in {
+                "no_factor_configured",
+                "no_matching_factor",
+            } and method in {
+                "average_data",
+                "supplier_specific",
+            }:
+                by_row[source_row] = DISPOSITION_NO_MATCHING_FACTOR
+                continue
+            by_row[source_row] = DISPOSITION_NEEDS_CONFIRMATION
             continue
         if (
             calc_status in _UNSUPPORTED_CALC_STATUSES
@@ -1981,8 +2232,10 @@ def reconcile_row_dispositions(
         counts[disposition] = int(counts.get(disposition, 0)) + 1
     included = int(counts[DISPOSITION_CALCULATED])
     needs_confirmation = int(counts[DISPOSITION_NEEDS_CONFIRMATION])
+    no_matching_factor = int(counts[DISPOSITION_NO_MATCHING_FACTOR])
     remaining_open = (
         needs_confirmation
+        + no_matching_factor
         + int(counts[DISPOSITION_UNSUPPORTED])
         + int(counts[DISPOSITION_INVALID])
     )
@@ -2004,8 +2257,9 @@ def reconcile_row_dispositions(
         "total": total,
         "included": included,
         "needs_confirmation": needs_confirmation,
+        "no_matching_factor": no_matching_factor,
         "unsupported": int(counts[DISPOSITION_UNSUPPORTED]),
-        "actionable_open": needs_confirmation,
+        "actionable_open": needs_confirmation + no_matching_factor,
         "remaining_open": remaining_open,
         "excluded": excluded,
         "complete": complete,
@@ -2096,12 +2350,14 @@ def labeled_scope_hero_caption(
     scope_states: Mapping[str, Any],
     lang: str = DEFAULT_LANG,
 ) -> str:
-    """Compact hero caption: calculated scopes only, each with its Scope label."""
+    """Compact hero caption for the company inventory (Scope 1 + Scope 2).
+
+    Scope 3 is shown on its own card and is never mixed into this caption.
+    """
     bits: list[str] = []
     for scope_key, label_key in (
         ("scope_1", "dash.kpi.scope1"),
         ("scope_2", "dash.hero.scope2_location"),
-        ("scope_3", "dash.kpi.scope3"),
     ):
         state = scope_states.get(scope_key) or {}
         if state.get("state") != "calculated":
@@ -2139,6 +2395,7 @@ def hero_result_status_and_disposition(
             dispositions.get("actionable_open", remaining_open) or 0
         )
         unsupported = int(dispositions.get("unsupported") or 0)
+        no_factor = int(dispositions.get("no_matching_factor") or 0)
         excluded_n = int(
             counts.get("outside_boundary", dispositions.get("excluded") or 0)
         )
@@ -2161,6 +2418,11 @@ def hero_result_status_and_disposition(
             unsupported=unsupported,
             outside=excluded_n,
         )
+        if no_factor:
+            status_line = (
+                f"{status_line} "
+                f"{t('dash.result_no_factor', lang, n=no_factor)}"
+            )
         if remaining_open > 0 or needs_review > 0:
             status = t("dash.result_preliminary", lang)
             disposition = status_line if included >= 1 or technically >= 1 else ""

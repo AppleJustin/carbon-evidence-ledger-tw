@@ -16,9 +16,6 @@ from carbon_ledger.ui.components import (
     render_status_badge,
 )
 from carbon_ledger.ui.i18n import t
-from carbon_ledger.ui.refrigerant_boundary_form import (
-    render_refrigerant_boundary_confirmation,
-)
 from carbon_ledger.ui.state import (
     get_current_result,
     get_focus_record,
@@ -232,13 +229,6 @@ with summary_cols[2]:
             doc_name = str(match.iloc[0].get("file_name") or "—")
     st.markdown(f"**{t('act.col.source_doc', lang)}**")
     st.write(doc_name)
-
-if str(activity.get("activity_type") or "") == "refrigerant_refill":
-    render_refrigerant_boundary_confirmation(
-        result,
-        lang,
-        record_filter=selected_record_id,
-    )
 
 # Layer 2 — calculation basis (business names, not raw IDs)
 with st.expander(t("act.layer.basis", lang), expanded=False):

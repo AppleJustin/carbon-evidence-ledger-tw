@@ -20,6 +20,7 @@ from carbon_ledger.intake import (
     suggest_unit,
 )
 from carbon_ledger.ui.i18n import t
+from carbon_ledger.ui.purchased_steel_confirmation import accepted_review_preview
 from carbon_ledger.ui.state import (
     STATE_INTAKE_FILE_NAME,
     STATE_INTAKE_METADATA,
@@ -177,6 +178,50 @@ def test_mapping_dropdown_shows_human_labels_not_backend_codes() -> None:
 
 def test_validation_preview_headers_are_human_readable() -> None:
     intake, table, metadata = _validated_intake()
+    accepted = intake.accepted_activities
+    assert not accepted.empty
+
+    zh_preview = accepted_review_preview(
+        accepted,
+        lang=ZH,
+        status=t("intake.result_accepted", ZH),
+        issue="—",
+    )
+    en_preview = accepted_review_preview(
+        accepted,
+        lang=EN,
+        status=t("intake.result_accepted", EN),
+        issue="—",
+    )
+    zh_columns = [str(col) for col in zh_preview.columns]
+    en_columns = [str(col) for col in en_preview.columns]
+    internal = {
+        "activity_type",
+        "activity_value",
+        "activity_start_date",
+        "site_id",
+    }
+    assert internal.isdisjoint(zh_columns)
+    assert internal.isdisjoint(en_columns)
+    assert t("intake.field.activity_type", ZH) in zh_columns
+    assert t("intake.field.activity_value", ZH) in zh_columns
+    assert t("intake.field.site_id", ZH) in zh_columns
+    assert "活動類型" in zh_columns
+    assert "用量" in zh_columns
+    assert "廠場／營運據點" in zh_columns
+    assert t("intake.field.activity_type", EN) in en_columns
+    assert t("intake.field.activity_value", EN) in en_columns
+    assert t("intake.field.site_id", EN) in en_columns
+
+    helper = (
+        REPO_ROOT / "src/carbon_ledger/ui/purchased_steel_confirmation.py"
+    ).read_text(encoding="utf-8")
+    assert "def accepted_review_preview(" in helper
+    assert 't("intake.field.activity_type"' in helper
+    assert "preview.rename" in helper
+    page = (REPO_ROOT / "app_pages/data_intake.py").read_text(encoding="utf-8")
+    assert "accepted_review_preview(" in page
+
     at = AppTest.from_file(str(APP_PATH), default_timeout=120)
     at.run()
     initialize_ui_state(at.session_state)
@@ -197,17 +242,14 @@ def test_validation_preview_headers_are_human_readable() -> None:
             continue
         columns.extend(str(col) for col in getattr(value, "columns", []))
     joined = " ".join(columns)
-    page = (REPO_ROOT / "app_pages/data_intake.py").read_text(encoding="utf-8")
-    assert 't("intake.field.activity_type"' in page
-    assert "preview.rename" in page
-    if joined:
-        assert "activity_type" not in joined
-        assert "activity_value" not in joined
-        assert "activity_start_date" not in joined
-        assert "site_id" not in joined
-        assert "活動類型" in joined
-        assert "用量" in joined
-        assert "廠場／營運據點" in joined
+    assert joined
+    assert "activity_type" not in joined
+    assert "activity_value" not in joined
+    assert "activity_start_date" not in joined
+    assert "site_id" not in joined
+    assert "活動類型" in joined
+    assert "用量" in joined
+    assert "廠場／營運據點" in joined
 
 
 def test_customer_never_sees_site_id_as_normal_field() -> None:

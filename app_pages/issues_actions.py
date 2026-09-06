@@ -18,9 +18,6 @@ from carbon_ledger.ui.components import (
 from carbon_ledger.ui.formatting import format_int
 from carbon_ledger.ui.i18n import t
 from carbon_ledger.ui.motion import mark_chart_reveal
-from carbon_ledger.ui.refrigerant_boundary_form import (
-    render_refrigerant_boundary_confirmation,
-)
 from carbon_ledger.ui.state import get_current_result, get_language
 from carbon_ledger.ui.view_models import issues_table
 
@@ -38,8 +35,6 @@ if result is None:
         t("empty.no_analysis_body", lang),
     )
     st.stop()
-
-render_refrigerant_boundary_confirmation(result, lang)
 
 table = issues_table(result, lang)
 open_issues = int(len(table))

@@ -46,7 +46,8 @@ _STEEL_HEADERS = (
     "emission_factor_value,emission_factor_unit,factor_boundary,"
     "factor_geography,factor_year,factor_source_id,evidence_reference,"
     "includes_pre_tier1_supply_chain_transport,"
-    "includes_tier1_to_reporting_company_transport"
+    "includes_tier1_to_reporting_company_transport,"
+    "tier1_to_reporting_company_transport_control"
 )
 _OLD_HEADERS = (
     "activity_type,activity_value,unit,activity_start_date,activity_end_date"
@@ -121,7 +122,8 @@ def _supplier_row(
     source_id: str = "ref_supplier_epd_wire_rod_2025",
     evidence: str = "EPD-2025-001",
     pre_tier1: str = "",
-    inbound: str = "",
+    inbound: str = "false",
+    control: str = "",
     start: str = "2025-01-01",
     end: str = "2025-12-31",
     activity: str = "採購鋼材",
@@ -130,7 +132,7 @@ def _supplier_row(
         f"{activity},{quantity},{unit},{start},{end},{method},{supplier},"
         f"{product},{product_id},{factor_value},{factor_unit},{boundary},"
         f"{geography},{factor_year},{source_id},{evidence},{pre_tier1},"
-        f"{inbound}"
+        f"{inbound},{control}"
     )
 
 
@@ -138,8 +140,9 @@ def _average_row(
     *,
     product: str = "steel wire rod",
     geography: str = "TW",
-    inbound: str = "",
+    inbound: str = "false",
     pre_tier1: str = "",
+    control: str = "",
 ) -> str:
     values = [""] * len(_STEEL_HEADERS.split(","))
     values[0] = "採購鋼材"
@@ -154,6 +157,7 @@ def _average_row(
     values[13] = "2023"
     values[16] = pre_tier1
     values[17] = inbound
+    values[18] = control
     return ",".join(values)
 
 
@@ -318,13 +322,38 @@ def test_older_factor_year_calculates_with_temporal_limit() -> None:
 def test_average_data_without_registered_factor_stays_no_factor() -> None:
     result, _ = _pipeline(_csv(_average_row()))
     steel = _steel_calc(result)
-    assert steel["calculation_status"] == "no_factor_configured"
+    assert steel["calculation_status"] == "no_matching_factor"
     assert pd.isna(steel["calculated_tco2e"])
     explanation = activity_detail_context(
         result, str(steel["record_id"]), ZH
     )["calculation_explanation"]
-    assert explanation == t("explain.steel.no_factor_configured", ZH)
+    assert explanation == t("explain.steel.no_matching_factor", ZH)
     assert "0" not in explanation
+
+
+def test_average_data_steel_plate_ten_tonnes_uses_approved_fixture_factor() -> None:
+    calcs, _, _ = _calculate_with_factors(
+        _csv(_average_row(product="鋼板")),
+        [
+            _steel_factor_row(
+                factor_id="ef_steel_plate_test_v1",
+                steel_product_type="鋼板",
+                factor_value="2.415",
+                numerator_unit="kgCO2e",
+                denominator_unit="kg",
+                factor_year="2023",
+                valid_from="2023-01-01",
+                valid_to="2025-12-31",
+                source_reference_id="ref_test_cfp_steel_plate",
+            )
+        ],
+    )
+    row = calcs.iloc[0]
+    assert row["calculation_status"] == "calculated"
+    assert float(row["calculated_kgco2e"]) == 24150.0
+    assert float(row["calculated_tco2e"]) == 24.15
+    assert row["ghg_scope"] == "scope_3"
+    assert row["scope_3_category"] == "category_1"
 
 
 def test_average_data_2023_factor_covering_2025_is_usable() -> None:
@@ -344,7 +373,7 @@ def test_average_data_expired_in_2024_cannot_cover_2025() -> None:
         [_steel_factor_row(valid_from="2023-01-01", valid_to="2024-12-31")],
     )
     row = calcs.iloc[0]
-    assert row["calculation_status"] == "no_factor_configured"
+    assert row["calculation_status"] == "no_matching_factor"
     assert pd.isna(row["calculated_tco2e"])
 
 
@@ -354,7 +383,7 @@ def test_average_data_mid_2025_start_cannot_represent_full_year() -> None:
         [_steel_factor_row(valid_from="2025-07-01", valid_to="2026-12-31")],
     )
     row = calcs.iloc[0]
-    assert row["calculation_status"] == "no_factor_configured"
+    assert row["calculation_status"] == "no_matching_factor"
     assert pd.isna(row["calculated_tco2e"])
 
 
@@ -369,7 +398,7 @@ def test_malformed_valid_to_is_not_open_ended() -> None:
         ],
     )
     row = calcs.iloc[0]
-    assert row["calculation_status"] == "no_factor_configured"
+    assert row["calculation_status"] == "no_matching_factor"
     assert pd.isna(row["calculated_tco2e"])
 
 
@@ -406,9 +435,13 @@ def test_pre_tier1_transport_does_not_block_category_1() -> None:
 
 
 def test_inbound_tier1_transport_is_not_counted_in_category_1() -> None:
-    result, _ = _pipeline(_csv(_supplier_row(inbound="true")))
+    result, _ = _pipeline(
+        _csv(_supplier_row(inbound="true", control="third_party"))
+    )
     steel = _steel_calc(result)
-    assert steel["calculation_status"] == "blocked_transport_not_category_1"
+    assert steel["calculation_status"] == (
+        "blocked_tier1_inbound_transport_requires_category4_split"
+    )
     assert pd.isna(steel["calculated_tco2e"])
     reason = str(steel["calculation_reason"])
     assert "Category 4" in reason
@@ -418,8 +451,35 @@ def test_inbound_tier1_transport_is_not_counted_in_category_1() -> None:
     zh = activity_detail_context(result, str(steel["record_id"]), ZH)[
         "calculation_explanation"
     ]
-    assert "Category 4" in zh or "入廠" in zh
+    assert "Category 4" in zh or "第三方" in zh
     assert zh != reason
+    assert "The factor includes" not in zh
+
+
+def test_company_controlled_inbound_is_not_category_4() -> None:
+    result, _ = _pipeline(
+        _csv(_supplier_row(inbound="true", control="reporting_company"))
+    )
+    steel = _steel_calc(result)
+    assert steel["calculation_status"] == (
+        "blocked_company_controlled_transport_requires_scope1_or2_split"
+    )
+    assert pd.isna(steel["calculated_tco2e"])
+    reason = str(steel["calculation_reason"])
+    assert "Category 4" not in reason
+    zh = activity_detail_context(result, str(steel["record_id"]), ZH)[
+        "calculation_explanation"
+    ]
+    assert "Scope 1" in zh or "本公司" in zh
+    assert zh != reason
+    assert scope3_category1_emissions_summary(result, ZH)["tco2e"] is None
+
+
+def test_blank_inbound_flag_is_not_treated_as_excluded() -> None:
+    result, _ = _pipeline(_csv(_supplier_row(inbound="")))
+    steel = _steel_calc(result)
+    assert steel["calculation_status"] == "blocked_factor_inclusion_unconfirmed"
+    assert pd.isna(steel["calculated_tco2e"])
 
 
 def test_original_ten_tonne_row_stays_no_factor_configured() -> None:
@@ -663,4 +723,5 @@ def test_chinese_steel_headers_enter_existing_alias_path() -> None:
     assert str(row["supplier_name"]) == "中鋼"
     assert str(row["factor_boundary"]) == "cradle_to_gate"
     steel = _steel_calc(result)
-    assert steel["calculation_status"] == "calculated"
+    assert steel["calculation_status"] == "blocked_factor_inclusion_unconfirmed"
+    assert pd.isna(steel["calculated_tco2e"])

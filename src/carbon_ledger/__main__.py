@@ -147,6 +147,44 @@ def build_parser() -> argparse.ArgumentParser:
             "prints the pre-activation summary and does not write."
         ),
     )
+    steel_activate = ref_sub.add_parser(
+        "activate-steel",
+        help=(
+            "Explicitly activate ONE reviewed purchased-steel candidate. "
+            "Official CFP_P_02 fields stay as-is; review metadata is required. "
+            "Never copies test fixtures into the active catalog."
+        ),
+    )
+    steel_activate.add_argument("--candidate-id", required=True)
+    steel_activate.add_argument("--reviewer", required=True)
+    steel_activate.add_argument("--approved-at", required=True)
+    steel_activate.add_argument("--factor-version", required=True)
+    steel_activate.add_argument(
+        "--lifecycle-boundary",
+        required=True,
+        help="Internally reviewed boundary. Must be cradle_to_gate.",
+    )
+    steel_activate.add_argument(
+        "--geography",
+        required=True,
+        help="Internally reviewed geography. Not stated by CFP_P_02.",
+    )
+    steel_activate.add_argument(
+        "--approved-for-reporting-from",
+        required=True,
+        help="Internal reporting applicability start. Not government valid_from.",
+    )
+    steel_activate.add_argument(
+        "--approved-for-reporting-to",
+        default="",
+        help="Internal reporting applicability end; blank is open-ended.",
+    )
+    steel_activate.add_argument(
+        "--rationale",
+        required=True,
+        help="Why this official row is applicable after review.",
+    )
+    steel_activate.add_argument("--confirm", action="store_true")
     propose_parser = ref_sub.add_parser(
         "propose-update",
         help=(
@@ -293,6 +331,7 @@ def _run_references_command(args: argparse.Namespace) -> int:
             repo_root,
             retrieved_at=str(args.retrieved_at),
         )
+        failed = False
         for report in reports:
             print(
                 f"{report['source_id']}: {report['status']} "
@@ -301,7 +340,15 @@ def _run_references_command(args: argparse.Namespace) -> int:
             if report.get("change_report"):
                 print(report["change_report"])
                 print()
-        return 0
+            if report.get("review_reason"):
+                print(f"review_reason: {report['review_reason']}")
+            if report.get("status") in {
+                "parse_failed",
+                "credential_required",
+                "schema_changed",
+            }:
+                failed = True
+        return 1 if failed else 0
     if command == "validate":
         paths = default_paths(repo_root)
         frame = validate_candidates(
@@ -390,6 +437,123 @@ def _run_references_command(args: argparse.Namespace) -> int:
         print(f"factor_id: {activation['factor_id']}")
         print(f"snapshot_id: {activation['snapshot_id']}")
         print(f"activated_at: {activation['activated_at']}")
+        return 0
+    if command == "activate-steel":
+        from carbon_ledger.steel_factor_catalog import (
+            SteelFactorActivationError,
+            activate_reviewed_steel_factor,
+            load_steel_factor_candidates,
+            steel_candidates_path,
+        )
+
+        paths = default_paths(repo_root)
+        candidate_id = str(args.candidate_id).strip()
+        candidates = load_steel_factor_candidates(paths["reference_dir"])
+        if candidates.empty:
+            print(
+                "Error: No steel candidates. Fetch CFP_P_02 from the "
+                "public data.gov.tw dataset first: "
+                "python -m carbon_ledger references fetch",
+                file=sys.stderr,
+            )
+            return 2
+        match = candidates.loc[candidates["candidate_id"] == candidate_id]
+        if match.empty:
+            print(
+                f"Error: Unknown steel candidate_id {candidate_id!r}.",
+                file=sys.stderr,
+            )
+            return 2
+        row = {
+            column: str(match.iloc[0].get(column) or "")
+            for column in match.columns
+        }
+        print(f"candidate_id: {candidate_id}")
+        print(f"official_name: {row.get('official_name')}")
+        print(f"official_coe: {row.get('official_coe')}")
+        print(f"official_unit: {row.get('official_unit')}")
+        print(f"announcementyear: {row.get('official_announcementyear')}")
+        print(f"source_record_id: {row.get('source_record_id')}")
+        print(f"source_url: {row.get('source_url')}")
+        print(f"snapshot_hash: {row.get('snapshot_hash')}")
+        print(
+            "Review fields are internally approved applicability, "
+            "not government valid_from/valid_to."
+        )
+        if not bool(args.confirm):
+            print("Activation not performed. Rerun with --confirm.")
+            return 2
+        from carbon_ledger.cfp_p_02 import parse_declared_factor_units
+
+        if not str(row.get("factor_year") or "").strip():
+            row["factor_year"] = str(row.get("official_announcementyear") or "")
+        if not str(row.get("steel_product_type") or "").strip():
+            row["steel_product_type"] = str(row.get("official_name") or "")
+        if not str(row.get("factor_value") or "").strip():
+            row["factor_value"] = str(row.get("official_coe") or "")
+        if not str(row.get("numerator_unit") or "").strip() or not str(
+            row.get("denominator_unit") or ""
+        ).strip():
+            units = parse_declared_factor_units(str(row.get("official_unit") or ""))
+            if units:
+                row["numerator_unit"] = units[0]
+                row["denominator_unit"] = units[1]
+        row.update(
+            {
+                "lifecycle_boundary": str(args.lifecycle_boundary).strip(),
+                "geography": str(args.geography).strip(),
+                "approved_for_reporting_from": str(
+                    args.approved_for_reporting_from
+                ).strip(),
+                "approved_for_reporting_to": str(
+                    args.approved_for_reporting_to
+                ).strip(),
+                "approval_status": "approved",
+                "reviewer": str(args.reviewer).strip(),
+                "approved_at": str(args.approved_at).strip(),
+                "factor_version": str(args.factor_version).strip(),
+                "reason": str(args.rationale).strip(),
+            }
+        )
+        try:
+            activated = activate_reviewed_steel_factor(
+                row, reference_dir=paths["reference_dir"]
+            )
+        except SteelFactorActivationError as exc:
+            print(f"Error: {exc.reason}", file=sys.stderr)
+            return 2
+        updated = candidates.copy()
+        updated.loc[
+            updated["candidate_id"] == candidate_id, "approval_status"
+        ] = "approved"
+        updated.loc[updated["candidate_id"] == candidate_id, "reviewer"] = (
+            str(args.reviewer).strip()
+        )
+        updated.loc[updated["candidate_id"] == candidate_id, "approved_at"] = (
+            str(args.approved_at).strip()
+        )
+        updated.loc[
+            updated["candidate_id"] == candidate_id, "lifecycle_boundary"
+        ] = str(args.lifecycle_boundary).strip()
+        updated.loc[updated["candidate_id"] == candidate_id, "geography"] = (
+            str(args.geography).strip()
+        )
+        updated.loc[
+            updated["candidate_id"] == candidate_id,
+            "approved_for_reporting_from",
+        ] = str(args.approved_for_reporting_from).strip()
+        updated.loc[
+            updated["candidate_id"] == candidate_id,
+            "approved_for_reporting_to",
+        ] = str(args.approved_for_reporting_to).strip()
+        updated.loc[
+            updated["candidate_id"] == candidate_id, "factor_version"
+        ] = str(args.factor_version).strip()
+        updated.to_csv(steel_candidates_path(paths["reference_dir"]), index=False)
+        print("Steel factor activated.")
+        print(f"factor_id: {activated['factor_id']}")
+        print(f"factor_version: {activated['factor_version']}")
+        print(f"steel_product_type: {activated['steel_product_type']}")
         return 0
     if command == "propose-update":
         proposal = propose_official_factor_update(

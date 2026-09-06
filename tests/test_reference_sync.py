@@ -319,6 +319,12 @@ def test_official_reference_sources_csv_loads_with_expected_columns() -> None:
     assert by_id.loc[
         "src_tw_moenv_general_emission_factors", "retrieval_strategy"
     ] == RETRIEVAL_DISCOVER_ATTACHMENT
+    assert by_id.loc["src_tw_moenv_cfp_p_02", "retrieval_strategy"] == (
+        "paginated_open_data_api"
+    )
+    assert by_id.loc["src_tw_moenv_cfp_p_02", "parser_type"] == (
+        "cfp_p_02_open_data_v1"
+    )
 
 
 def test_allowlisted_official_source_accepted() -> None:
@@ -849,7 +855,11 @@ def test_existing_analysis_works_when_sync_network_unavailable(tmp_path: Path) -
     sources = load_official_sources(paths["sources"])
     active = sources.loc[sources["active"].str.lower() == "true"]
     fetchable_ids = set(
-        active.loc[active["fetch_mode"] == FETCH_MODE_FETCH, "source_id"]
+        active.loc[
+            (active["fetch_mode"] == FETCH_MODE_FETCH)
+            & (active["retrieval_strategy"] != "paginated_open_data_api"),
+            "source_id",
+        ]
     )
     provenance_ids = set(
         active.loc[
@@ -1132,10 +1142,18 @@ def test_direct_artifact_urls_are_not_assumed_for_landing_sources() -> None:
         (sources["active"].str.lower() == "true")
         & (sources["fetch_mode"].str.lower() == "fetch")
     ]
-    for _, row in fetchable.iterrows():
+    landing = fetchable.loc[
+        fetchable["retrieval_strategy"] != "paginated_open_data_api"
+    ]
+    for _, row in landing.iterrows():
         assert row["expected_file_type"] == "html"
         assert str(row["parser_type"]).endswith("_landing_v1")
         assert not str(row["landing_url"]).lower().endswith(".csv")
+    api_sources = fetchable.loc[
+        fetchable["retrieval_strategy"] == "paginated_open_data_api"
+    ]
+    assert not api_sources.empty
+    assert (api_sources["expected_file_type"] == "json").all()
 
 
 def test_resolve_and_filter_skips_non_allowlisted_hrefs() -> None:

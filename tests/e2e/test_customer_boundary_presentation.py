@@ -403,7 +403,7 @@ def test_scope3_not_included_disclosure(page) -> None:
     click_button(page, "使用示範資料")
     wait_streamlit_idle(page)
     page.set_viewport_size({"width": 1440, "height": 900})
-    zh_copy = t("dash.hero.scope3_version", ZH)
+    zh_copy = t("dash.scope3.empty", ZH)
     scope3 = page.locator("[data-testid='stColumn']").filter(
         has_text="Scope 3"
     ).filter(has=page.get_by_text("其他價值鏈排放", exact=True))
@@ -411,7 +411,8 @@ def test_scope3_not_included_disclosure(page) -> None:
     scope3.first.scroll_into_view_if_needed()
     expect(scope3.get_by_text(zh_copy, exact=False)).to_be_visible()
     text = scope3.inner_text()
-    assert "尚未納入計算" in text
+    assert "目前尚無可納入的 Scope 3 計算結果" in text
+    assert "Scope 3 尚未納入計算" not in text
     assert zh_copy in text
     assert "0 tCO₂e" not in text
     assert "0.00 tCO₂e" not in text
@@ -425,7 +426,7 @@ def test_scope3_not_included_disclosure(page) -> None:
     if lang.count():
         lang.first.click(force=True)
         wait_streamlit_idle(page)
-        en_copy = t("dash.hero.scope3_version", EN)
+        en_copy = t("dash.scope3.empty", EN)
         scope3_en = page.locator("[data-testid='stColumn']").filter(
             has_text="Scope 3"
         ).filter(

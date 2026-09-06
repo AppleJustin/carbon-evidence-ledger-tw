@@ -523,10 +523,10 @@ def test_unconfirmed_electricity_scope1_and_counts() -> None:
     assert float(inventory["scope_1"]) == pytest.approx(SCOPE1_UNCONFIRMED, abs=1e-6)
     assert float(inventory["scope_2"] or 0.0) == pytest.approx(0.0, abs=1e-9)
     assert recon["counts"][DISPOSITION_CALCULATED] == 4
-    assert recon["counts"][DISPOSITION_NEEDS_CONFIRMATION] == 2
-    assert recon["counts"][DISPOSITION_UNSUPPORTED] == 1
+    assert recon["counts"][DISPOSITION_NEEDS_CONFIRMATION] == 3
+    assert recon["counts"][DISPOSITION_UNSUPPORTED] == 0
     assert recon["counts"][DISPOSITION_EXCLUDED_OUT_OF_SCOPE] == 1
-    assert recon["actionable_open"] == 2
+    assert recon["actionable_open"] == 3
     assert sum(recon["counts"].values()) == 8
     assert recon["total"] == 8
 
@@ -636,8 +636,8 @@ def test_disposition_categories_cover_all_eight_rows() -> None:
     assert recon["total"] == 8
     assert sum(recon["counts"].values()) == 8
     assert recon["included"] + recon["remaining_open"] + recon["excluded"] == 8
-    assert recon["actionable_open"] == recon["needs_confirmation"] == 2
-    assert recon["unsupported"] == 1
+    assert recon["actionable_open"] == recon["needs_confirmation"] == 3
+    assert recon["unsupported"] == 0
     assert recon["excluded"] == 1
 
 

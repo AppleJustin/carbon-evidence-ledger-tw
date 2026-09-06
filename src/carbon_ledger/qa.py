@@ -639,7 +639,7 @@ def _evaluate_activity(
         )
         return issues
 
-    if calculation_status == "no_factor_configured":
+    if calculation_status in {"no_factor_configured", "no_matching_factor"}:
         rule = rules_by_id["qa_no_factor_configured"]
         issues.append(
             _issue_from_rule(

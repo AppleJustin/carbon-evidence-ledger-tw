@@ -94,6 +94,49 @@ def _parse_timestamp(value: Any) -> pd.Timestamp | None:
     return pd.Timestamp(parsed)
 
 
+def _validity_bound(value: Any) -> tuple[str, pd.Timestamp | None]:
+    if _is_blank(value):
+        return "blank", None
+    stamp = _parse_timestamp(value)
+    if stamp is None:
+        return "malformed", None
+    return "ok", stamp
+
+
+def _heating_covers_activity_period(
+    row: pd.Series,
+    activity_start: Any,
+    activity_end: Any,
+    *,
+    reporting_year: int | None = None,
+) -> bool:
+    from_kind, valid_from = _validity_bound(row.get("valid_from"))
+    to_kind, valid_to = _validity_bound(row.get("valid_to"))
+    if from_kind == "malformed" or to_kind == "malformed":
+        return False
+    start_kind, start = _validity_bound(activity_start)
+    end_kind, end = _validity_bound(activity_end)
+    if start_kind == "malformed" or end_kind == "malformed":
+        return False
+    if start is None:
+        start = end
+    if end is None:
+        end = start
+    if start is None or end is None:
+        year = activity_calendar_year(activity_start, activity_end)
+        if not year and reporting_year is not None:
+            year = str(int(reporting_year))
+        if not year:
+            return valid_from is None and valid_to is None
+        start = pd.Timestamp(int(year), 1, 1)
+        end = pd.Timestamp(int(year), 12, 31)
+    if valid_from is not None and valid_from > start:
+        return False
+    if valid_to is not None and valid_to < end:
+        return False
+    return True
+
+
 def activity_calendar_year(activity_start: Any, activity_end: Any) -> str:
     """Return YYYY when start and end share one calendar year; else blank."""
     start = _parse_timestamp(activity_start)
@@ -208,6 +251,7 @@ def select_heating_value(
     activity_end: Any,
     geography: str = "TW",
     fuel_subtype: Any = "",
+    reporting_year: int | None = None,
 ) -> HeatingValueSelection:
     """Select exactly one ready heating-value row for fuel + year + subtype.
 
@@ -215,6 +259,8 @@ def select_heating_value(
     natural-gas subtype is never inferred from company, region, or volume.
     """
     year = activity_calendar_year(activity_start, activity_end)
+    if not year and reporting_year is not None:
+        year = str(int(reporting_year))
     fuel = _text(fuel_type)
     if not year:
         return HeatingValueSelection(
@@ -287,6 +333,12 @@ def select_heating_value(
         row
         for _, row in matched.iterrows()
         if heating_value_has_complete_provenance(row)
+        and _heating_covers_activity_period(
+            row,
+            activity_start,
+            activity_end,
+            reporting_year=reporting_year,
+        )
     ]
     incomplete_count = len(matched) - len(complete)
     if not complete:

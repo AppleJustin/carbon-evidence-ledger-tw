@@ -423,9 +423,7 @@ def test_dashboard_immediately_consumes_latest_result() -> None:
     assert "data-cel-target=" in text
     assert "Scope 1" in text
     assert "Scope 2" in text
-    assert t("dash.scope3_short", "zh-TW") in text or t(
-        "dash.scope3_unsupported", "zh-TW"
-    ) in text
+    assert t("dash.scope3.empty", "zh-TW") in text
     assert summary["calculated_row_count"] == 3
     assert float(scopes["scope_1"] or 0) > 0
     assert float(scopes["scope_2"] or 0) > 0
