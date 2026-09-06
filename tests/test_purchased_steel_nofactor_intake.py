@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -72,14 +73,21 @@ from carbon_ledger.ui.view_models import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-XLSX_PATH = Path(
-    "/Users/justin/Downloads/carbon-ledger-mixed-factor-validity-test.xlsx"
-)
+FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "eight_row_inventory.csv"
+XLSX_NAME = "carbon-ledger-mixed-factor-validity-test.xlsx"
 FIXED_INGESTED_AT = pd.Timestamp("2025-02-01T00:00:00Z")
 ZH = LANG_ZH
 SCOPE1 = 45.950836
 SCOPE2 = 23.30
 INVENTORY = 69.250836
+
+
+def _xlsx_bytes() -> bytes:
+    frame = pd.read_csv(FIXTURE_PATH)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        frame.to_excel(writer, sheet_name="01_2025綜合正常", index=False)
+    return buffer.getvalue()
 
 
 def _apply_named(table, detailed, committed, item_id: str, payload: dict):
@@ -93,7 +101,7 @@ def _apply_named(table, detailed, committed, item_id: str, payload: dict):
 
 def _load_xlsx_intake():
     table = parse_uploaded_table(
-        file_name=XLSX_PATH.name, data=XLSX_PATH.read_bytes()
+        file_name=XLSX_NAME, data=_xlsx_bytes()
     )
     detailed = suggest_column_mapping_with_confidence(
         list(table.columns), frame=table.frame
@@ -1003,13 +1011,13 @@ def test_apptest_wrong_transport_then_correct_plate_and_dashboard() -> None:
     assert not at.exception
     assert len(at.file_uploader) == 1
     at.file_uploader[0].upload(
-        XLSX_PATH.name,
-        XLSX_PATH.read_bytes(),
+        XLSX_NAME,
+        _xlsx_bytes(),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     at.run()
     assert not at.exception
-    assert at.session_state[STATE_INTAKE_FILE_NAME] == XLSX_PATH.name
+    assert at.session_state[STATE_INTAKE_FILE_NAME] == XLSX_NAME
 
     table, _detailed, committed, mapping, meta, intake = _load_xlsx_intake()
     seeded = _session(table, committed, mapping, meta, intake)
