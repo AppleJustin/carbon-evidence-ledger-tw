@@ -1,12 +1,12 @@
 # Regulatory change report
 
-Generated at: 2026-09-05T18:16:53Z
+Generated at: 2026-09-06T18:16:48Z
 Overall freshness: CURRENT
 Review required: True
 
 ## Reviewable changes
 
-### chg_src_tw_twse_portal_20260905T181646Z
+### chg_src_tw_twse_portal_20260906T181641Z
 - source_id: `src_tw_twse_portal`
 - change_type: `POTENTIAL_REGULATORY_CHANGE`
 - previous_hash: `dca8a2bdc9b4cfd9c049dc3f48692cff0bff1b010d6a48383b2ec1821d1f289f`
