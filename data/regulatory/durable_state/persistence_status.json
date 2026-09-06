@@ -1,17 +1,18 @@
 {
   "status": "OK",
-  "persisted_at": "2026-08-12T15:19:54Z",
-  "destination": "data/regulatory/durable_state",
+  "persisted_at": "2026-09-06T18:16:48Z",
+  "destination": "/home/runner/work/carbon-evidence-ledger-tw/carbon-evidence-ledger-tw/data/regulatory/durable_state",
   "files": [
     "source_freshness_state.csv",
     "monitoring_summary.json",
     "regulatory_change_log.csv",
     "regulatory_conflict_log.csv",
     "persistence_status.json",
+    "regulatory_change_report.md",
     "change_signals_state.json"
   ],
   "consecutive_persistence_failures": 0,
   "monitoring_state_branch": "regulatory-monitor-state",
-  "runtime_state_dir": "data/regulatory/durable_state",
+  "runtime_state_dir": "/home/runner/work/carbon-evidence-ledger-tw/carbon-evidence-ledger-tw/data/regulatory/durable_state",
   "error": ""
 }
