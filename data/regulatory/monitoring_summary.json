@@ -1,7 +1,7 @@
 {
   "overall_regulatory_freshness": "CURRENT",
-  "last_global_check_at": "2026-09-08T19:25:51Z",
-  "last_successful_check_at": "2026-09-08T19:25:51Z",
+  "last_global_check_at": "2026-09-09T19:16:18Z",
+  "last_successful_check_at": "2026-09-09T19:16:18Z",
   "sources_current": 2,
   "sources_stale": 0,
   "sources_failed": 0,
@@ -12,7 +12,7 @@
   "regulatory_conflicts": 0,
   "review_required": true,
   "reviewable_new_changes": 1,
-  "generated_at": "2026-09-08T19:25:54Z",
+  "generated_at": "2026-09-09T19:16:23Z",
   "fail_safe_state": null,
   "state_source": "durable_persisted_state",
   "consecutive_fetch_failures": 0,
