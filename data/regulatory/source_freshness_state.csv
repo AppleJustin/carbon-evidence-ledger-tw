@@ -21,8 +21,8 @@ src_tw_fsc_roadmap_press_20230817,,,,,,,,,0,CHECK_DUE,,portal_or_doc,portal_or_d
 src_tw_tpex_qa_20250402,,,,,,,,,0,CHECK_DUE,,portal_or_doc,portal_or_doc,SUPPLEMENTARY
 src_tw_fsc_portal,,,,,,,,,0,CHECK_DUE,,portal_or_doc,portal_or_doc,SUPPLEMENTARY
 src_tw_sfb_portal,,,,,,,,,0,CHECK_DUE,,portal_or_doc,portal_or_doc,SUPPLEMENTARY
-src_tw_twse_portal,2026-08-12T15:19:51Z,2026-08-12T15:19:51Z,,"""69ca4304-4ab7b""","Mon, 30 Mar 2026 09:31:48 GMT",dca8a2bdc9b4cfd9c049dc3f48692cff0bff1b010d6a48383b2ec1821d1f289f,OK,,0,AUTOMATED_CURRENT,2026-08-19T15:19:51Z,portal_or_doc,portal_or_doc,CRITICAL
-src_tw_tpex_portal,2026-08-12T15:19:52Z,2026-08-12T15:19:52Z,,"""6a44c791-746fb""","Wed, 01 Jul 2026 07:53:53 GMT",121721d463f53715750768ec82cb6e4d09abca5ebb47665fe655de83a7981796,OK,,0,AUTOMATED_CURRENT,2026-08-19T15:19:52Z,portal_or_doc,portal_or_doc,CRITICAL
+src_tw_twse_portal,2026-09-12T18:21:48Z,2026-09-12T18:21:48Z,2026-09-12T18:21:48Z,"""6a9a6562-4bac8""","Fri, 04 Sep 2026 06:29:54 GMT",aa277098cc8ece6f495657421fc2ae140d0bce6f7acc133e87d91ac2ad970e0f,OK,,0,AUTOMATED_CURRENT,2026-09-19T18:21:48Z,portal_or_doc,portal_or_doc,CRITICAL
+src_tw_tpex_portal,2026-09-12T18:21:51Z,2026-08-12T15:19:52Z,,"""6a44c791-746fb""","Wed, 01 Jul 2026 07:53:53 GMT",121721d463f53715750768ec82cb6e4d09abca5ebb47665fe655de83a7981796,FETCH_FAILED,[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1032),1,FETCH_FAILED,2026-09-19T18:21:51Z,portal_or_doc,portal_or_doc,CRITICAL
 src_tw_moenv_ghg_registry,,,,,,,POLICY_SKIPPED,bootstrap: regulatory portal MANUAL_REFERENCE,0,MANUALLY_VERIFIED,,portal_or_doc,portal_or_doc,SUPPLEMENTARY
 src_tw_moenv_ghg_open_data,2026-08-12T15:19:53Z,,,,,,CREDENTIAL_REQUIRED,Missing required credential env MOENV_API_KEY; no HTTP attempted.,0,MANUAL_ACCESS_REQUIRED,2027-08-12T15:19:53Z,GHG_P_01,GHG_P_01,SUPPLEMENTARY
 src_tw_moenv_oaout,,,,,,,,,0,CHECK_DUE,,portal_or_doc,portal_or_doc,SUPPLEMENTARY
